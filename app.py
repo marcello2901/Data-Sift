@@ -48,9 +48,7 @@ This section contains the essential settings that are shared between both tools.
 
 - **Output Format:**
   A selection menu to choose the format of the generated files. The default is `.csv`. Choose `Excel (.xlsx)` for better compatibility with Microsoft Excel or `CSV (.csv)` for a lighter, universal format.
-
-- **Download output file:**
-  After the spreadsheet is filtered, a download button will appear, allowing the user to download the filtered sheet.""",
+  """,
     "2. Filter Tool": """**2. Filter Tool**
 
 The purpose of this tool is to **"clean"** your spreadsheet by **removing** rows that match specific criteria. The result is a **single file** containing only the data that "survived" the filters.
