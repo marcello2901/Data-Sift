@@ -15,7 +15,7 @@ import uuid
 import copy
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(layout="wide", page_title="Data Sift")
+st.set_page_config(layout="wide", page_title="Data Sift - Spreadsheet Filter Tool")
 
 # --- CONSTANTES E DADOS ---
 GDPR_TERMS = """
@@ -28,7 +28,7 @@ The responsibility for the nature of the processed data is exclusively yours.
 To proceed, you must confirm that the data to be used has been properly handled and anonymized.
 """
 MANUAL_CONTENT = {
-    "Introduction": """**Welcome to the Spreadsheet Filter Tool!**
+    "Introduction": """**Welcome to Data Sift!**
 
 This program is designed to optimize your work with large volumes of data by offering two main functionalities:
 
