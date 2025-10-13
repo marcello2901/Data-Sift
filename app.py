@@ -18,7 +18,7 @@ import copy
 st.set_page_config(layout="wide", page_title="Data Sift")
 
 # --- CONSTANTES E DADOS ---
-TERMO_LGPD = """
+GDPR_TERMS = """
 This tool is designed to process and filter data from spreadsheets. The files you upload may contain sensitive personal data (such as full name, date of birth, national ID numbers, health information, etc.), the processing of which is regulated by data protection laws like the General Data Protection Regulation (GDPR or LGPD).
 
 It is your sole responsibility to ensure that all data used in this tool complies with applicable data protection regulations. We strongly recommend that you only use previously anonymized data to protect the privacy of data subjects.
