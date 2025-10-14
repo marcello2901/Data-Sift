@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Versão 1.9 - Correção definitiva do marcador "Selecionar Todos"
+# Versão 1.9 - Correção definitiva do marcador "Selecionar Todos" e implementação de placeholders
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -183,6 +183,10 @@ class DataProcessor:
             progress_bar.progress(progress, text=f"Applying filter {i+1}/{total_filters}: '{col_name[:30]}...'")
 
             col_config_str = f_config.get('p_col', '')
+            # A lógica para múltiplas colunas (separadas por ';') foi mantida.
+            # Se for usado selectbox (uma coluna), este código ainda funciona.
+            # Para manter a funcionalidade original de múltiplas colunas, o campo teria que ser um text_input.
+            # Como a solicitação foi para usar o mesmo funcionamento (selectbox), esta lógica se aplicará a uma única coluna por regra.
             cols_to_check = [c.strip() for c in col_config_str.split(';') if c.strip()]
 
             is_numeric_filter = f_config.get('p_val1', '').lower() != 'empty'
@@ -343,48 +347,43 @@ def to_csv(df):
 
 # --- FUNÇÕES DE INTERFACE ---
 
-# ######### INÍCIO DA CORREÇÃO #########
-# A função de callback é a chave. Ela é executada ANTES do script ser re-renderizado.
-# Ela lê o novo estado do marcador mestre diretamente da session_state (que é atualizada pelo Streamlit)
-# e aplica esse novo estado a todas as regras filhas.
 def handle_select_all():
     new_state = st.session_state.get('select_all_master_checkbox', False)
     for rule in st.session_state.filter_rules:
         rule['p_check'] = new_state
-# ######### FIM DA CORREÇÃO #########
 
-def draw_filter_rules(sex_column_values):
+# ######### INÍCIO DAS ALTERAÇÕES #########
+def draw_filter_rules(sex_column_values, column_options): # Parâmetro adicionado
     st.markdown("""<style>
         .stButton>button { padding: 0.25rem 0.3rem; font-size: 0.8rem; white-space: nowrap; }
         div[data-testid="stTextInput"] input, div[data-testid="stSelectbox"] div[data-baseweb="select"] {
             border: 1px solid rgba(255, 75, 75, 0.15) !important;
             border-radius: 0.25rem;
         }
+        /* Estilo para o placeholder do selectbox */
+        div[data-baseweb="select"] input::placeholder {
+            color: black !important;
+            opacity: 0.2 !important;
+        }
     </style>""", unsafe_allow_html=True)
     
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="medium")
     
-    # ######### INÍCIO DA CORREÇÃO #########
-    # 1. Determina o estado visual do marcador mestre com base nos filhos.
-    #    Isso garante que se o usuário desmarcar um filho, o mestre também desmarca.
     if st.session_state.filter_rules:
         all_checked = all(rule.get('p_check', True) for rule in st.session_state.filter_rules)
     else:
         all_checked = False
 
-    # 2. Renderiza o marcador mestre. A 'key' é crucial para a callback funcionar.
-    #    A 'on_change' é a forma robusta de garantir que a lógica será executada.
     header_cols[0].checkbox(
         "Select/Deselect all",
         value=all_checked,
-        key='select_all_master_checkbox', # Chave que a callback usa para encontrar o novo valor
-        on_change=handle_select_all,      # Função a ser executada no clique
+        key='select_all_master_checkbox', 
+        on_change=handle_select_all,   
         label_visibility="collapsed",
         help="Select/Deselect all rules"
     )
-    # ######### FIM DA CORREÇÃO #########
     
-    header_cols[1].markdown("**Column** <span title='Enter the column name. You can use a semicolon (;) to apply the rule to multiple columns. The row will be excluded only if ALL columns meet the condition.'>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[1].markdown("**Column** <span title='Select the column to apply the filter to.'>&#9432;</span>", unsafe_allow_html=True)
     header_cols[2].markdown("**Operator** <span title='Use comparison operators to define the first filter.'>&#9432;</span>", unsafe_allow_html=True)
     header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data.'>&#9432;</span>", unsafe_allow_html=True)
     
@@ -408,9 +407,25 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
     for i, rule in enumerate(st.session_state.filter_rules):
         with st.container():
             cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="medium") 
-            # Este marcador filho agora lê seu estado que foi definido pela callback
             rule['p_check'] = cols[0].checkbox(" ", value=rule.get('p_check', True), key=f"p_check_{rule['id']}", label_visibility="collapsed")
-            rule['p_col'] = cols[1].text_input("Column", value=rule.get('p_col', ''), key=f"p_col_{rule['id']}", label_visibility="collapsed")
+            
+            # --- CAMPO DE TEXTO ALTERADO PARA SELECTBOX ---
+            current_col = rule.get('p_col')
+            current_index = None
+            if current_col and column_options:
+                try:
+                    current_index = column_options.index(current_col)
+                except ValueError:
+                    current_index = None # Coluna salva não existe nas opções atuais
+            
+            rule['p_col'] = cols[1].selectbox(
+                "Column", 
+                options=column_options, 
+                index=current_index,
+                placeholder="Select column to filter", # Placeholder adicionado
+                key=f"p_col_{rule['id']}", 
+                label_visibility="collapsed"
+            )
             
             rule['p_op1'] = cols[2].selectbox("Operator 1", ops_main, index=ops_main.index(rule.get('p_op1', '=')) if rule.get('p_op1') in ops_main else 0, key=f"p_op1_{rule['id']}", label_visibility="collapsed")
             rule['p_val1'] = cols[3].text_input("Value 1", value=rule.get('p_val1', ''), key=f"p_val1_{rule['id']}", label_visibility="collapsed")
@@ -461,8 +476,24 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
                     rule['c_sexo_check'] = cond_cols[4].checkbox("Sex/Gender", value=rule.get('c_sexo_check', False), key=f"c_sexo_check_{rule['id']}")
                     with cond_cols[5]:
                         if rule['c_sexo_check']:
-                            rule['c_sexo_val'] = st.selectbox("Sex Value", options=sex_column_values, index=sex_column_values.index(rule.get('c_sexo_val')) if rule.get('c_sexo_val') in sex_column_values else 0, key=f"c_sexo_val_{rule['id']}", label_visibility="collapsed")
+                            # Adicionado placeholder aqui também, por consistência, embora o comportamento seja um pouco diferente
+                            sex_options = [v for v in sex_column_values if v] # Remove o valor vazio se houver
+                            current_sex = rule.get('c_sexo_val')
+                            sex_index = None
+                            if current_sex and sex_options:
+                                try:
+                                    sex_index = sex_options.index(current_sex)
+                                except ValueError:
+                                    sex_index = None
+                            
+                            rule['c_sexo_val'] = st.selectbox("Sex Value", 
+                                options=sex_options, 
+                                index=sex_index,
+                                placeholder="Select value",
+                                key=f"c_sexo_val_{rule['id']}", 
+                                label_visibility="collapsed")
         st.markdown("---")
+# ######### FIM DAS ALTERAÇÕES #########
 
 def draw_stratum_rules():
     st.markdown("""<style>.stButton>button {padding: 0.25rem 0.3rem; font-size: 0.8rem;}</style>""", unsafe_allow_html=True)
@@ -517,12 +548,30 @@ def main():
         uploaded_file = st.file_uploader("Select spreadsheet", type=['csv', 'xlsx', 'xls'])
         df = load_dataframe(uploaded_file)
         
-        column_options = [""] + df.columns.tolist() if df is not None else [""]
+        # ######### INÍCIO DA ALTERAÇÃO #########
+        # Opções de coluna sem o item vazio para permitir o placeholder
+        column_options = df.columns.tolist() if df is not None else []
         
         c1, c2, c3 = st.columns(3)
-        with c1: st.selectbox("Age Column", options=column_options, key="col_idade")
-        with c2: st.selectbox("Sex/Gender Column", options=column_options, key="col_sexo")
-        with c3: st.selectbox("Output Format", ["CSV (.csv)", "Excel (.xlsx)"], key="output_format")
+        with c1: 
+            st.selectbox(
+                "Age Column", 
+                options=column_options, 
+                key="col_idade", 
+                index=None, # Define o padrão como não selecionado
+                placeholder="Select the Age column" # Adiciona o placeholder
+            )
+        with c2: 
+            st.selectbox(
+                "Sex/Gender Column", 
+                options=column_options, 
+                key="col_sexo", 
+                index=None, # Define o padrão como não selecionado
+                placeholder="Select the Sex/Gender column" # Adiciona o placeholder
+            )
+        with c3: 
+            st.selectbox("Output Format", ["CSV (.csv)", "Excel (.xlsx)"], key="output_format")
+        # ######### FIM DA ALTERAÇÃO #########
 
         st.session_state.sex_column_is_valid = True
         st.session_state.age_column_is_valid = True
@@ -536,7 +585,7 @@ def main():
                         st.warning(f"A coluna '{st.session_state.col_sexo}' possui {len(unique_sex_values)} valores únicos, excedendo o limite de 5. A estratificação por gênero foi desativada.")
                         st.session_state.sex_column_is_valid = False
                     else:
-                        sex_column_values = [""] + list(unique_sex_values)
+                        sex_column_values = [""] + list(unique_sex_values) # Mantido para compatibilidade com partes existentes
                 except KeyError:
                     st.warning(f"Coluna '{st.session_state.col_sexo}' não encontrada."); st.session_state.sex_column_is_valid = False
 
@@ -560,7 +609,9 @@ def main():
 
     with tab_filter:
         st.header("Exclusion Rules")
-        draw_filter_rules(sex_column_values)
+        # ######### INÍCIO DA ALTERAÇÃO #########
+        draw_filter_rules(sex_column_values, column_options) # Passa as opções de coluna
+        # ######### FIM DA ALTERAÇÃO #########
         if st.button("Add New Filter Rule"):
             st.session_state.filter_rules.append({'id': str(uuid.uuid4()), 'p_check': True, 'p_col': '', 'p_op1': '<', 'p_val1': '', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''})
             st.rerun()
