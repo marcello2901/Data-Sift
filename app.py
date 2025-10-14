@@ -396,13 +396,9 @@ def draw_filter_rules(sex_column_values):
     header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data. '>&#9432;</span>", unsafe_allow_html=True)
     
     tooltip_text = """Select another operator to define an interval.
-
 How to use:
-
 BETWEEN: Excludes values within the interval (inclusive). Ex: BETWEEN 10 and 20 removes everything from 10 to 20.
-
 OR: Excludes values outside an interval. Use to keep the data in between. Ex: < 10 OR > 20 removes everything less than 10 and greater than 20.
-
 AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20 removes from 11 to 19 (keeps the values 10 and 20).
 """
     tooltip_text_html = tooltip_text.replace('\n', '&#10;')
@@ -430,7 +426,11 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
             
             with cols[5]:
                 if rule['p_expand']:
-                    exp_cols = st.columns(3)
+                    # ######### INÍCIO DA CORREÇÃO #########
+                    # Ajuste da proporção das colunas para dar mais espaço ao seletor de lógica
+                    exp_cols = st.columns([3, 2, 2])
+                    # ######### FIM DA CORREÇÃO #########
+                    
                     # Usar ops_central_logic para os seletores de lógica composta
                     rule['p_op_central'] = exp_cols[0].selectbox("Logic", ops_central_logic, index=ops_central_logic.index(rule.get('p_op_central', 'OR')) if rule.get('p_op_central') in ops_central_logic else 0, key=f"p_op_central_{rule['id']}", label_visibility="collapsed")
                     rule['p_op2'] = exp_cols[1].selectbox("Operator 2", ops_main, index=ops_main.index(rule.get('p_op2', '>')) if rule.get('p_op2') in ops_main else 0, key=f"p_op2_{rule['id']}", label_visibility="collapsed")
@@ -457,7 +457,6 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
                     rule['c_idade_check'] = cond_cols[2].checkbox("Age", value=rule.get('c_idade_check', False), key=f"c_idade_check_{rule['id']}")
                     with cond_cols[3]:
                         if rule['c_idade_check']:
-                            # ######### INÍCIO DA CORREÇÃO #########
                             # Ajuste das larguras das colunas e uso de markdown para alinhar o "AND"
                             age_cols = st.columns([2, 2, 1, 2, 2])
                             rule['c_idade_op1'] = age_cols[0].selectbox("Age Op 1", ops_age, index=ops_age.index(rule.get('c_idade_op1','>')) if rule.get('c_idade_op1') in ops_age else 0, key=f"c_idade_op1_{rule['id']}", label_visibility="collapsed")
@@ -465,7 +464,6 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
                             age_cols[2].markdown("<p style='text-align: center; margin-top: 25px;'>AND</p>", unsafe_allow_html=True)
                             rule['c_idade_op2'] = age_cols[3].selectbox("Age Op 2", ops_age, index=ops_age.index(rule.get('c_idade_op2','<')) if rule.get('c_idade_op2') in ops_age else 0, key=f"c_idade_op2_{rule['id']}", label_visibility="collapsed")
                             rule['c_idade_val2'] = age_cols[4].text_input("Age Val 2", value=rule.get('c_idade_val2',''), key=f"c_idade_val2_{rule['id']}", label_visibility="collapsed")
-                            # ######### FIM DA CORREÇÃO #########
                     
                     rule['c_sexo_check'] = cond_cols[4].checkbox("Sex/Gender", value=rule.get('c_sexo_check', False), key=f"c_sexo_check_{rule['id']}")
                     with cond_cols[5]:
