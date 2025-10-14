@@ -209,33 +209,27 @@ class DataProcessor:
             progress_bar.progress(progress, text=f"Applying filter {i+1}/{total_filters}: '{col_name[:30]}...'")
 
             col_config_str = f_config.get('p_col', '')
-            cols_to_check = [c.strip() for c in col_config_str.split(';')]
+            cols_to_check = [c.strip() for c in col_config_str.split(';') if c.strip()]
 
             # Converte as colunas para numérico se o filtro principal não for 'vazio'
             is_numeric_filter = f_config.get('p_val1', '').lower() != 'vazio'
             for col in cols_to_check:
                 if col in df_processado.columns and is_numeric_filter:
                     df_processado[col] = self._safe_to_numeric(df_processado[col])
+
+            combined_mask = pd.Series(True, index=df_processado.index)
+            if not cols_to_check:
+                combined_mask = pd.Series(False, index=df_processado.index)
+            else:
+                for sub_col in cols_to_check:
+                    if sub_col in df_processado.columns:
+                        combined_mask &= self._create_main_mask(df_processado, f_config, sub_col)
+                    else:
+                        combined_mask = pd.Series(False, index=df_processado.index)
+                        break
             
-            # Alterado de 'OR' (any) para 'AND' (all)
-            final_col_mask = pd.Series(False, index=df_processado.index)
-            if cols_to_check:
-                # Inicia com a máscara da primeira coluna
-                if cols_to_check[0] in df_processado.columns:
-                    # Começa com uma máscara que é True para todas as linhas
-                    combined_mask = pd.Series(True, index=df_processado.index)
-                    for sub_col in cols_to_check:
-                        if sub_col in df_processado.columns:
-                            # A máscara final é o AND de todas as máscaras de coluna
-                            combined_mask &= self._create_main_mask(df_processado, f_config, sub_col)
-                        else:
-                            # Se uma coluna não existe, a condição para esta regra falha
-                            combined_mask = pd.Series(False, index=df_processado.index)
-                            break
-                    final_col_mask = combined_mask
-                
             conditional_mask = self._create_conditional_mask(df_processado, f_config, global_config)
-            final_mask_to_exclude = final_col_mask & conditional_mask
+            final_mask_to_exclude = combined_mask & conditional_mask
             
             df_processado = df_processado[~final_mask_to_exclude]
         
@@ -390,16 +384,6 @@ def to_csv(df):
 
 # --- FUNÇÕES DE INTERFACE ---
 
-# ######### INÍCIO DA MODIFICAÇÃO #########
-# Nova função de callback para o checkbox "selecionar todos"
-def toggle_all_rules():
-    # Pega o estado atual do checkbox mestre
-    new_state = st.session_state.get('select_all_filters', False)
-    # Aplica o novo estado a todas as regras individuais
-    for rule in st.session_state.filter_rules:
-        rule['p_check'] = new_state
-# ######### FIM DA MODIFICAÇÃO #########
-
 def draw_filter_rules(sex_column_values):
     st.markdown("""<style>
         .stButton>button { padding: 0.25rem 0.3rem; font-size: 0.8rem; white-space: nowrap; }
@@ -409,28 +393,27 @@ def draw_filter_rules(sex_column_values):
         }
     </style>""", unsafe_allow_html=True)
     
-    header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5])
-    
     # ######### INÍCIO DA MODIFICAÇÃO #########
-    # Determina o estado do checkbox "selecionar todos"
+    # Adicionado gap="medium" para aumentar o espaçamento entre as colunas
+    header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="medium")
+    
+    # Lógica robusta para o checkbox "selecionar todos"
     if st.session_state.filter_rules:
         all_checked = all(rule.get('p_check', True) for rule in st.session_state.filter_rules)
     else:
         all_checked = False
 
-    # Adiciona o checkbox "selecionar todos" no cabeçalho da primeira coluna
-    header_cols[0].checkbox(
-        "✓",
-        value=all_checked,
-        key='select_all_filters',
-        on_change=toggle_all_rules,
-        help="Select/Deselect all rules"
-    )
-    # ######### FIM DA MODIFICAÇÃO #########
-    
-    header_cols[1].markdown("**Column** <span title='Enter the column name. '>&#9432;</span>", unsafe_allow_html=True)
+    # Inicializa o estado anterior se não existir
+    if 'select_all_state' not in st.session_state:
+        st.session_state.select_all_state = all_checked
+
+    # Renderiza o checkbox "selecionar todos" com o ícone como rótulo para alinhamento
+    select_all = header_cols[0].checkbox("ⓘ", value=all_checked, help="Select/Deselect all rules")
+
+    header_cols[1].markdown("**Column**", unsafe_allow_html=True)
     header_cols[2].markdown("**Operator** <span title='Use comparison operators to define the first filter. '>&#9432;</span>", unsafe_allow_html=True)
     header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data. '>&#9432;</span>", unsafe_allow_html=True)
+    # ######### FIM DA MODIFICAÇÃO #########
     
     tooltip_text = """Select another operator to define an interval.
 How to use:
@@ -445,13 +428,26 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
     header_cols[7].markdown("**Actions** <span title='Use to duplicate or delete a rule. '>&#9432;</span>", unsafe_allow_html=True)
     st.markdown("<hr style='margin-top: -0.5rem; margin-bottom: 0.5rem;'>", unsafe_allow_html=True)
 
+    # ######### INÍCIO DA MODIFICAÇÃO #########
+    # Verifica se o estado do checkbox "selecionar todos" mudou
+    if select_all != st.session_state.select_all_state:
+        for rule in st.session_state.filter_rules:
+            rule['p_check'] = select_all
+        st.session_state.select_all_state = select_all
+        st.rerun()
+    # Sincroniza o estado caso as caixas individuais mudem
+    elif all_checked != st.session_state.select_all_state:
+         st.session_state.select_all_state = all_checked
+    # ######### FIM DA MODIFICAÇÃO #########
+
     ops_main = ["", ">", "<", "=", "Not equal to", "≥", "≤"]
     ops_age = ["", ">", "<", "≥", "≤", "="]
     ops_central_logic = ["AND", "OR", "BETWEEN"]
 
     for i, rule in enumerate(st.session_state.filter_rules):
         with st.container():
-            cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5]) 
+            # Adicionado gap="medium" para aumentar o espaçamento
+            cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="medium") 
             rule['p_check'] = cols[0].checkbox(" ", value=rule.get('p_check', True), key=f"p_check_{rule['id']}", label_visibility="collapsed")
             rule['p_col'] = cols[1].text_input("Column", value=rule.get('p_col', ''), key=f"p_col_{rule['id']}", label_visibility="collapsed")
             
