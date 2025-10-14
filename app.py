@@ -384,6 +384,16 @@ def to_csv(df):
 
 # --- FUNÇÕES DE INTERFACE ---
 
+# ######### INÍCIO DA MODIFICAÇÃO #########
+# Função de callback robusta para o checkbox "selecionar todos"
+def handle_select_all():
+    # Obtém o estado atual do checkbox mestre a partir do session_state
+    new_state = st.session_state.get('select_all_master_checkbox', False)
+    # Aplica o novo estado a todas as regras individuais
+    for rule in st.session_state.filter_rules:
+        rule['p_check'] = new_state
+# ######### FIM DA MODIFICAÇÃO #########
+
 def draw_filter_rules(sex_column_values):
     st.markdown("""<style>
         .stButton>button { padding: 0.25rem 0.3rem; font-size: 0.8rem; white-space: nowrap; }
@@ -393,26 +403,29 @@ def draw_filter_rules(sex_column_values):
         }
     </style>""", unsafe_allow_html=True)
     
-    # ######### INÍCIO DA MODIFICAÇÃO #########
     # Adicionado gap="medium" para aumentar o espaçamento entre as colunas
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="medium")
     
-    # Lógica robusta para o checkbox "selecionar todos"
+    # ######### INÍCIO DA MODIFICAÇÃO #########
+    # Determina o estado do checkbox "selecionar todos" com base nas regras individuais
     if st.session_state.filter_rules:
         all_checked = all(rule.get('p_check', True) for rule in st.session_state.filter_rules)
     else:
         all_checked = False
 
-    # Inicializa o estado anterior se não existir
-    if 'select_all_state' not in st.session_state:
-        st.session_state.select_all_state = all_checked
-
-    # Renderiza o checkbox "selecionar todos" com o ícone como rótulo para alinhamento
-    select_all = header_cols[0].checkbox("ⓘ", value=all_checked, help="Select/Deselect all rules")
-
-    header_cols[1].markdown("**Column**", unsafe_allow_html=True)
-    header_cols[2].markdown("**Operator** <span title='Use comparison operators to define the first filter. '>&#9432;</span>", unsafe_allow_html=True)
-    header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data. '>&#9432;</span>", unsafe_allow_html=True)
+    # Renderiza o checkbox "selecionar todos" sem rótulo visível e com o callback
+    header_cols[0].checkbox(
+        "Select/Deselect all",
+        value=all_checked,
+        key='select_all_master_checkbox',  # Chave única para o widget
+        on_change=handle_select_all,      # Função de callback
+        label_visibility="collapsed",
+        help="Select/Deselect all rules"
+    )
+    
+    header_cols[1].markdown("**Column** <span title='Enter the column name. You can use a semicolon (;) to apply the rule to multiple columns. The row will be excluded only if ALL columns meet the condition.'>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[2].markdown("**Operator** <span title='Use comparison operators to define the first filter.'>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data.'>&#9432;</span>", unsafe_allow_html=True)
     # ######### FIM DA MODIFICAÇÃO #########
     
     tooltip_text = """Select another operator to define an interval.
@@ -422,23 +435,11 @@ OR: Excludes values outside an interval. Use to keep the data in between. Ex: < 
 AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20 removes from 11 to 19 (keeps the values 10 and 20).
 """
     tooltip_text_html = tooltip_text.replace('\n', '&#10;')
-    header_cols[5].markdown(f"**Compound Logic** <span title='{tooltip_text_html} '>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[5].markdown(f"**Compound Logic** <span title='{tooltip_text_html}'>&#9432;</span>", unsafe_allow_html=True)
     
-    header_cols[6].markdown("**Condition** <span title='Restricts the main rule to a specific subgroup. The exclusion will only affect rows that also satisfy the age and/or sex/gender criteria defined here. '>&#9432;</span>", unsafe_allow_html=True)
-    header_cols[7].markdown("**Actions** <span title='Use to duplicate or delete a rule. '>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[6].markdown("**Condition** <span title='Restricts the main rule to a specific subgroup. The exclusion will only affect rows that also satisfy the age and/or sex/gender criteria defined here.'>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[7].markdown("**Actions** <span title='Use to duplicate or delete a rule.'>&#9432;</span>", unsafe_allow_html=True)
     st.markdown("<hr style='margin-top: -0.5rem; margin-bottom: 0.5rem;'>", unsafe_allow_html=True)
-
-    # ######### INÍCIO DA MODIFICAÇÃO #########
-    # Verifica se o estado do checkbox "selecionar todos" mudou
-    if select_all != st.session_state.select_all_state:
-        for rule in st.session_state.filter_rules:
-            rule['p_check'] = select_all
-        st.session_state.select_all_state = select_all
-        st.rerun()
-    # Sincroniza o estado caso as caixas individuais mudem
-    elif all_checked != st.session_state.select_all_state:
-         st.session_state.select_all_state = all_checked
-    # ######### FIM DA MODIFICAÇÃO #########
 
     ops_main = ["", ">", "<", "=", "Not equal to", "≥", "≤"]
     ops_age = ["", ">", "<", "≥", "≤", "="]
