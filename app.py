@@ -15,7 +15,7 @@ import uuid
 import copy
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(layout="wide", page_title="Data Sift - Spreadsheet Filter Tool")
+st.set_page_config(layout="wide", page_title="Data Sift")
 
 # --- CONSTANTES E DADOS ---
 GDPR_TERMS = """
@@ -30,7 +30,7 @@ To proceed, you must confirm that the data to be used has been properly handled 
 MANUAL_CONTENT = {
     "Introduction": """**Welcome to Data Sift!**
 
-This program is designed to optimize your work with large volumes of data by offering two main functionalities:
+This program is a spreadsheet filter tool designed to optimize your work with large volumes of data by offering two main functionalities:
 
 1.  **Filtering:** To clean your database by removing rows that are not of interest.
 2.  **Stratification:** To divide your database into specific subgroups.
