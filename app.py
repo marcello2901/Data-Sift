@@ -391,9 +391,9 @@ def draw_filter_rules(sex_column_values):
     </style>""", unsafe_allow_html=True)
     
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5])
-    header_cols[1].markdown("**Column** <span title='Enter the column name.'>&#9432;</span>", unsafe_allow_html=True)
-    header_cols[2].markdown("**Operator** <span title='Use comparison operators to define the first filter.'>&#9432;</span>", unsafe_allow_html=True)
-    header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data.'>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[1].markdown("**Column** <span title='Enter the column name. '>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[2].markdown("**Operator** <span title='Use comparison operators to define the first filter. '>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data. '>&#9432;</span>", unsafe_allow_html=True)
     
     tooltip_text = """Select another operator to define an interval.
 How to use:
@@ -402,10 +402,10 @@ OR: Excludes values outside an interval. Use to keep the data in between. Ex: < 
 AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20 removes from 11 to 19 (keeps the values 10 and 20).
 """
     tooltip_text_html = tooltip_text.replace('\n', '&#10;')
-    header_cols[5].markdown(f"**Compound Logic** <span title='{tooltip_text_html}'>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[5].markdown(f"**Compound Logic** <span title='{tooltip_text_html} '>&#9432;</span>", unsafe_allow_html=True)
     
-    header_cols[6].markdown("**Condition** <span title='Activate the option to filter this specific column by age or sex/gender'>&#9432;</span>", unsafe_allow_html=True)
-    header_cols[7].markdown("**Actions** <span title='Use to duplicate or delete a rule'>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[6].markdown("**Condition** <span title='Restricts the main rule to a specific subgroup. The exclusion will only affect rows that also satisfy the age and/or sex/gender criteria defined here. '>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[7].markdown("**Actions** <span title='Use to duplicate or delete a rule. '>&#9432;</span>", unsafe_allow_html=True)
     st.markdown("<hr style='margin-top: -0.5rem; margin-bottom: 0.5rem;'>", unsafe_allow_html=True)
 
     # Operadores para a UI, agora em inglês (ou o que for comum)
