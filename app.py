@@ -397,7 +397,7 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
     header_cols[5].markdown(f"**Compound Logic** <span title='{tooltip_text_html}'>&#9432;</span>", unsafe_allow_html=True)
     
     header_cols[6].markdown("**Condition** <span title='Restricts the main rule to a specific subgroup. The exclusion will only affect rows that also satisfy the age and/or sex/gender criteria defined here.'>&#9432;</span>", unsafe_allow_html=True)
-    header_cols[7].markdown("**Actions** <span title='Use to duplicate or delete a rule.'>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[7].markdown("**Actions** <span title='Use """Clone""" to duplicate and """X""" delete a rule.'>&#9432;</span>", unsafe_allow_html=True)
     st.markdown("<hr style='margin-top: -0.5rem; margin-bottom: 0.5rem;'>", unsafe_allow_html=True)
 
     ops_main = ["", ">", "<", "=", "Not equal to", "≥", "≤"]
