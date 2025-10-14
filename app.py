@@ -396,9 +396,13 @@ def draw_filter_rules(sex_column_values):
     header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data. '>&#9432;</span>", unsafe_allow_html=True)
     
     tooltip_text = """Select another operator to define an interval.
+
 How to use:
+
 BETWEEN: Excludes values within the interval (inclusive). Ex: BETWEEN 10 and 20 removes everything from 10 to 20.
+
 OR: Excludes values outside an interval. Use to keep the data in between. Ex: < 10 OR > 20 removes everything less than 10 and greater than 20.
+
 AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20 removes from 11 to 19 (keeps the values 10 and 20).
 """
     tooltip_text_html = tooltip_text.replace('\n', '&#10;')
