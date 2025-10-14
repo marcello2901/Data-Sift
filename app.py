@@ -581,8 +581,8 @@ def main():
             if st.session_state.col_sexo:
                 try:
                     unique_sex_values = df[st.session_state.col_sexo].dropna().unique()
-                    if len(unique_sex_values) > 5:
-                        st.warning(f"A coluna '{st.session_state.col_sexo}' possui {len(unique_sex_values)} valores únicos, excedendo o limite de 5. A estratificação por gênero foi desativada.")
+                    if len(unique_sex_values) > 10:
+                        st.warning(f"A coluna '{st.session_state.col_sexo}' possui {len(unique_sex_values)} valores únicos, excedendo o limite de 10. A estratificação por gênero foi desativada.")
                         st.session_state.sex_column_is_valid = False
                     else:
                         sex_column_values = [""] + list(unique_sex_values) # Mantido para compatibilidade com partes existentes
