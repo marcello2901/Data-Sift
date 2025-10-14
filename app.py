@@ -404,7 +404,7 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
     tooltip_text_html = tooltip_text.replace('\n', '&#10;')
     header_cols[5].markdown(f"**Compound Logic** <span title='{tooltip_text_html}'>&#9432;</span>", unsafe_allow_html=True)
     
-    header_cols[6].markdown("**Condition** <span title='Activate the option to filter this specific column by age or sex'>&#9432;</span>", unsafe_allow_html=True)
+    header_cols[6].markdown("**Condition** <span title='Activate the option to filter this specific column by age or sex/gender'>&#9432;</span>", unsafe_allow_html=True)
     header_cols[7].markdown("**Actions** <span title='Use to duplicate or delete a rule'>&#9432;</span>", unsafe_allow_html=True)
     st.markdown("<hr style='margin-top: -0.5rem; margin-bottom: 0.5rem;'>", unsafe_allow_html=True)
 
@@ -461,7 +461,7 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
                             rule['c_idade_op2'] = age_cols[3].selectbox("Age Op 2", ops_age, index=ops_age.index(rule.get('c_idade_op2','<')) if rule.get('c_idade_op2') in ops_age else 0, key=f"c_idade_op2_{rule['id']}", label_visibility="collapsed")
                             rule['c_idade_val2'] = age_cols[4].text_input("Age Val 2", value=rule.get('c_idade_val2',''), key=f"c_idade_val2_{rule['id']}", label_visibility="collapsed")
                     
-                    rule['c_sexo_check'] = cond_cols[4].checkbox("Sex", value=rule.get('c_sexo_check', False), key=f"c_sexo_check_{rule['id']}")
+                    rule['c_sexo_check'] = cond_cols[4].checkbox("Sex/Gender", value=rule.get('c_sexo_check', False), key=f"c_sexo_check_{rule['id']}")
                     with cond_cols[5]:
                         if rule['c_sexo_check']:
                             rule['c_sexo_val'] = st.selectbox("Sex Value", options=sex_column_values, index=sex_column_values.index(rule.get('c_sexo_val')) if rule.get('c_sexo_val') in sex_column_values else 0, key=f"c_sexo_val_{rule['id']}", label_visibility="collapsed")
