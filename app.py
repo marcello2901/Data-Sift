@@ -58,7 +58,7 @@ Each row you add is a condition to **remove** data. If a row in your spreadsheet
 
 - **[✓] (Activation Checkbox):** Toggles a rule on or off without deleting it.
 
-- **Column:** The name of the column where the filter will be applied. **Tip:** You can apply the same rule to multiple columns at once by separating their names with a semicolon (`;`).
+- **Column:** The name of the column where the filter will be applied. Tip: You can apply the rule to multiple columns at once by separating their names with a semicolon (;). When doing so, a row will be excluded only if all specified columns meet the condition.
 
 - **Operator and Value:** Operators ">", "<", "≥", "≤", "=", "Not equal to" define the rule's logic. They are used to define the ranges that will be considered for data **exclusion**.
 **Tip:** The keyword `vazio` (empty) is a powerful feature:
@@ -426,10 +426,8 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
             
             with cols[5]:
                 if rule['p_expand']:
-                    # ######### INÍCIO DA CORREÇÃO #########
                     # Ajuste da proporção das colunas para dar mais espaço ao seletor de lógica
                     exp_cols = st.columns([3, 2, 2])
-                    # ######### FIM DA CORREÇÃO #########
                     
                     # Usar ops_central_logic para os seletores de lógica composta
                     rule['p_op_central'] = exp_cols[0].selectbox("Logic", ops_central_logic, index=ops_central_logic.index(rule.get('p_op_central', 'OR')) if rule.get('p_op_central') in ops_central_logic else 0, key=f"p_op_central_{rule['id']}", label_visibility="collapsed")
@@ -457,11 +455,20 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
                     rule['c_idade_check'] = cond_cols[2].checkbox("Age", value=rule.get('c_idade_check', False), key=f"c_idade_check_{rule['id']}")
                     with cond_cols[3]:
                         if rule['c_idade_check']:
-                            # Ajuste das larguras das colunas e uso de markdown para alinhar o "AND"
                             age_cols = st.columns([2, 2, 1, 2, 2])
                             rule['c_idade_op1'] = age_cols[0].selectbox("Age Op 1", ops_age, index=ops_age.index(rule.get('c_idade_op1','>')) if rule.get('c_idade_op1') in ops_age else 0, key=f"c_idade_op1_{rule['id']}", label_visibility="collapsed")
                             rule['c_idade_val1'] = age_cols[1].text_input("Age Val 1", value=rule.get('c_idade_val1',''), key=f"c_idade_val1_{rule['id']}", label_visibility="collapsed")
-                            age_cols[2].markdown("<p style='text-align: center; margin-top: 25px;'>AND</p>", unsafe_allow_html=True)
+                            
+                            # ######### INÍCIO DA CORREÇÃO #########
+                            # HTML/CSS para centralizar verticalmente o texto "AND"
+                            centered_and_html = """
+                            <div style="display: flex; justify-content: center; align-items: center; height: 38px;">
+                                AND
+                            </div>
+                            """
+                            age_cols[2].markdown(centered_and_html, unsafe_allow_html=True)
+                            # ######### FIM DA CORREÇÃO #########
+                            
                             rule['c_idade_op2'] = age_cols[3].selectbox("Age Op 2", ops_age, index=ops_age.index(rule.get('c_idade_op2','<')) if rule.get('c_idade_op2') in ops_age else 0, key=f"c_idade_op2_{rule['id']}", label_visibility="collapsed")
                             rule['c_idade_val2'] = age_cols[4].text_input("Age Val 2", value=rule.get('c_idade_val2',''), key=f"c_idade_val2_{rule['id']}", label_visibility="collapsed")
                     
