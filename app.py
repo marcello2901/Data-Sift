@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Versão 1.5 - Seleção dinâmica de múltiplos gêneros para estratificação e correção de bugs
+# Versão 1.6 - Implementação de travas de segurança e validações
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -61,11 +61,11 @@ Each row you add is a condition to **remove** data. If a row in your spreadsheet
 - **Column:** The name of the column where the filter will be applied. **Tip:** You can apply the rule to multiple columns at once by separating their names with a semicolon (;). When doing so, a row will be excluded only if **all** specified columns meet the condition.
 
 - **Operator and Value:** Operators ">", "<", "≥", "≤", "=", "Not equal to" define the rule's logic. They are used to define the ranges that will be considered for data **exclusion**.
-**Tip:** The keyword `vazio` (empty) is a powerful feature:
+**Tip:** The keyword `empty` is a powerful feature:
     - **Scenario 1: Exclude rows with MISSING data.**
-        - **Configuration:** Column: `"Exam_X"`, Operator: `"is equal to"`, Value: `"vazio"`.
+        - **Configuration:** Column: `"Exam_X"`, Operator: `"is equal to"`, Value: `"empty"`.
     - **Scenario 2: Keep only rows with EXISTING data.**
-        - **Configuration:** Column: `"Observations"`, Operator: `"Not equal to"`, Value: `"vazio"`.
+        - **Configuration:** Column: `"Observations"`, Operator: `"Not equal to"`, Value: `"empty"`.
 
 - **Compound Logic:** Expands the rule to create `AND` / `OR` conditions for when the user wants to set exclusion ranges.
 
@@ -93,18 +93,7 @@ Unlike the filter, the purpose of this tool is to **split** your spreadsheet int
 DEFAULT_FILTERS = [
     {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'CAPA.IST', 'p_op1': '<', 'p_val1': '15', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '50', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
     {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Ferritina.FERRI', 'p_op1': '<', 'p_val1': '15', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '600', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Ultra-PCR.ULTRAPCR', 'p_op1': '>', 'p_val1': '5', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.#HGB', 'p_op1': '<', 'p_val1': '7,0', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.LEUCO', 'p_op1': '>', 'p_val1': '11000', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Creatinina.CRE', 'p_op1': '>', 'p_val1': '1,5', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Creatinina.eTFG2021', 'p_op1': '<', 'p_val1': '60', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'HBGLI.HBGLI', 'p_op1': '>', 'p_val1': '6,5', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'GLICOSE.GLI', 'p_op1': '>', 'p_val1': '200', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '65', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'TSH.TSH', 'p_op1': '>', 'p_val1': '10', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '0,01', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Idade', 'p_op1': '>', 'p_val1': '75', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.OBSSV', 'p_op1': 'Não é igual a', 'p_val1': 'vazio', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.OBSSB', 'p_op1': 'Não é igual a', 'p_val1': 'vazio', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.OBSSP', 'p_op1': 'Não é igual a', 'p_val1': 'vazio', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''},
+    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Ultra-PCR.ULTRAPCR', 'p_op1': '>', 'p_val1': '5', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '<', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''}
 ]
 
 # --- CLASSES DE PROCESSAMENTO ---
@@ -114,7 +103,6 @@ def get_data_processor():
     return DataProcessor()
 
 class DataProcessor:
-    # Mapeamento de operadores da UI para a lógica Python
     OPERATOR_MAP = {'=': '==', 'Não é igual a': '!=', '≥': '>=', '≤': '<=', 'is equal to': '==', 'Not equal to': '!='}
 
     def _safe_to_numeric(self, series: pd.Series) -> pd.Series:
@@ -122,25 +110,18 @@ class DataProcessor:
         return pd.to_numeric(series.astype(str).str.replace(',', '.', regex=False), errors='coerce')
 
     def _build_single_mask(self, series: pd.Series, op: str, val: Any) -> pd.Series:
-        # Lidar com comparações de string para "is equal to" / "not equal to" no contexto de texto
         if isinstance(val, str):
             val_lower_strip = val.lower().strip()
             series_lower_strip = series.astype(str).str.strip().str.lower()
-            if op == '==':
-                return series_lower_strip == val_lower_strip
-            elif op == '!=':
-                return series_lower_strip != val_lower_strip
-        
-        # Para comparações numéricas ou outros tipos
-        # Note: A conversão para numérico já deve ter sido feita antes de chamar esta função para valores numéricos
+            if op == '==': return series_lower_strip == val_lower_strip
+            elif op == '!=': return series_lower_strip != val_lower_strip
         return eval(f"series {op} val")
 
     def _create_main_mask(self, df: pd.DataFrame, f: Dict, col: str) -> pd.Series:
         op1_ui, val1 = f.get('p_op1'), f.get('p_val1')
-        op1 = self.OPERATOR_MAP.get(op1_ui, op1_ui) # Traduz o operador da UI para o operador Python
+        op1 = self.OPERATOR_MAP.get(op1_ui, op1_ui)
 
-        # Lidar com valores "vazio" (empty)
-        if val1 and val1.lower() == 'vazio': # Mantido 'vazio' no backend como palavra-chave
+        if val1 and val1.lower() == 'empty':
             if op1 == '==': return df[col].isna() | (df[col].astype(str).str.strip() == '')
             if op1 == '!=': return df[col].notna() & (df[col].astype(str).str.strip() != '')
             return pd.Series([False] * len(df), index=df.index)
@@ -149,24 +130,20 @@ class DataProcessor:
             if f.get('p_expand'):
                 v1_num = float(str(val1).replace(',', '.'))
                 op_central_ui, op2_ui, val2 = f.get('p_op_central'), f.get('p_op2'), f.get('p_val2')
-                op2 = self.OPERATOR_MAP.get(op2_ui, op2_ui) # Traduz o operador da UI para o operador Python
+                op2 = self.OPERATOR_MAP.get(op2_ui, op2_ui)
                 v2_num = float(str(val2).replace(',', '.'))
 
-                # Lógica para os novos operadores centrais (AND, OR, BETWEEN)
-                if op_central_ui.upper() == 'BETWEEN': # Usar .upper() para ser flexível
+                if op_central_ui.upper() == 'BETWEEN':
                     min_val, max_val = sorted((v1_num, v2_num))
                     return df[col].between(min_val, max_val, inclusive='both')
                 m1 = self._build_single_mask(df[col], op1, v1_num)
                 m2 = self._build_single_mask(df[col], op2, v2_num)
-                if op_central_ui.upper() == 'AND':
-                    return m1 & m2
-                if op_central_ui.upper() == 'OR':
-                    return m1 | m2
+                if op_central_ui.upper() == 'AND': return m1 & m2
+                if op_central_ui.upper() == 'OR': return m1 | m2
             else:
                 v1_num = float(str(val1).replace(',', '.'))
                 return self._build_single_mask(df[col], op1, v1_num)
         except (ValueError, TypeError):
-            # Em caso de erro de conversão (ex: valor não numérico para operador numérico)
             return pd.Series([False] * len(df), index=df.index)
 
     def _create_conditional_mask(self, df: pd.DataFrame, f: Dict, global_config: Dict) -> pd.Series:
@@ -189,7 +166,7 @@ class DataProcessor:
                     v2 = float(str(val_idade2).replace(',', '.'))
                     mascara_condicional &= self._build_single_mask(df[col_idade], op2, v2)
             except (ValueError, TypeError):
-                pass # Ignorar condição de idade se os valores não forem numéricos válidos
+                pass
 
         col_sexo = global_config.get('coluna_sexo')
         if f.get('c_sexo_check') and col_sexo and col_sexo in df.columns:
@@ -211,8 +188,7 @@ class DataProcessor:
             col_config_str = f_config.get('p_col', '')
             cols_to_check = [c.strip() for c in col_config_str.split(';') if c.strip()]
 
-            # Converte as colunas para numérico se o filtro principal não for 'vazio'
-            is_numeric_filter = f_config.get('p_val1', '').lower() != 'vazio'
+            is_numeric_filter = f_config.get('p_val1', '').lower() != 'empty'
             for col in cols_to_check:
                 if col in df_processado.columns and is_numeric_filter:
                     df_processado[col] = self._safe_to_numeric(df_processado[col])
@@ -235,7 +211,7 @@ class DataProcessor:
         
         progress_bar.progress(1.0, text="Filtering complete!")
         return df_processado
-
+    
     def apply_stratification(self, df: pd.DataFrame, strata_config: Dict, global_config: Dict, progress_bar) -> Dict[str, pd.DataFrame]:
         col_idade = global_config.get('coluna_idade')
         col_sexo = global_config.get('coluna_sexo')
@@ -251,13 +227,11 @@ class DataProcessor:
         sex_strata = strata_config.get('sexes', [])
 
         final_strata_to_process = []
-        if not age_strata and sex_strata: # Apenas por sexo, se não houver faixa etária
-            for sex_rule in sex_strata:
-                final_strata_to_process.append({'age': None, 'sex': sex_rule})
-        elif age_strata and not sex_strata: # Apenas por idade, se não houver sexo
-            for age_rule in age_strata:
-                final_strata_to_process.append({'age': age_rule, 'sex': None})
-        else: # Combinação de sexo e idade
+        if not age_strata and sex_strata:
+            for sex_rule in sex_strata: final_strata_to_process.append({'age': None, 'sex': sex_rule})
+        elif age_strata and not sex_strata:
+            for age_rule in age_strata: final_strata_to_process.append({'age': age_rule, 'sex': None})
+        else:
             for sex_rule in sex_strata:
                 for age_rule in age_strata:
                     final_strata_to_process.append({'age': age_rule, 'sex': sex_rule})
@@ -286,7 +260,7 @@ class DataProcessor:
                     combined_mask &= age_mask
                 except (ValueError, TypeError):
                     st.warning(f"Could not apply age rule due to invalid values: {age_rule}")
-                    continue # Pular este estrato se a regra de idade for inválida
+                    continue
 
             if sex_rule:
                 sex_val = sex_rule.get('value')
@@ -310,10 +284,8 @@ class DataProcessor:
             op2, val2 = age_rule.get('op2'), age_rule.get('val2')
             
             def get_int(val): 
-                try:
-                    return int(float(str(val).replace(',', '.')))
-                except (ValueError, TypeError):
-                    return None # Retorna None se não puder converter para int/float
+                try: return int(float(str(val).replace(',', '.')))
+                except (ValueError, TypeError): return None
 
             v1_int = get_int(val1)
             v2_int = get_int(val2)
@@ -326,15 +298,11 @@ class DataProcessor:
                     elif op1 == '≤': name_parts.append(f"Up_to_{v1_int}_years")
             elif op1 and val1 and op2 and val2:
                 if v1_int is not None and v2_int is not None:
-                    # Converte para float para ordenação correta, depois para int para nomes
                     v1_f, v2_f = float(str(val1).replace(',', '.')), float(str(val2).replace(',', '.'))
                     
-                    # Organiza os operadores e valores para obter o limite inferior e superior
                     bounds = []
                     if op1 and val1: bounds.append((v1_f, op1))
                     if op2 and val2: bounds.append((v2_f, op2))
-                    
-                    # Ordena os limites com base nos valores
                     bounds.sort(key=lambda x: x[0])
 
                     low_val_f, low_op = bounds[0]
@@ -343,10 +311,8 @@ class DataProcessor:
                     low_bound = int(low_val_f) if low_op == '≥' else int(low_val_f + 1) if low_op == '>' else int(low_val_f)
                     high_bound = int(high_val_f) if high_op == '≤' else int(high_val_f - 1) if high_op == '<' else int(high_val_f)
                     
-                    if low_bound > high_bound:
-                        name_parts.append("Invalid_range")
-                    else:
-                        name_parts.append(f"{low_bound}_to_{high_bound}_years")
+                    if low_bound > high_bound: name_parts.append("Invalid_range")
+                    else: name_parts.append(f"{low_bound}_to_{high_bound}_years")
         if sex_rule:
             sex_name = str(sex_rule.get('value', '')).replace(' ', '_')
             if sex_name: name_parts.append(sex_name)
@@ -358,17 +324,14 @@ class DataProcessor:
 def load_dataframe(uploaded_file):
     if uploaded_file is None: return None
     try:
+        uploaded_file.seek(0)
         if uploaded_file.name.endswith('.csv'):
-            try:
-                # Tenta ler com ';' e ','
-                uploaded_file.seek(0) # Volta para o início do arquivo
-                return pd.read_csv(uploaded_file, sep=';', decimal=',', encoding='latin-1')
+            try: return pd.read_csv(io.BytesIO(uploaded_file.getvalue()), sep=';', decimal=',', encoding='latin-1')
             except Exception:
-                # Tenta ler com ',' e '.'
                 uploaded_file.seek(0)
-                return pd.read_csv(uploaded_file, sep=',', decimal='.', encoding='utf-8')
+                return pd.read_csv(io.BytesIO(uploaded_file.getvalue()), sep=',', decimal='.', encoding='utf-8')
         else:
-            return pd.read_excel(uploaded_file, engine='openpyxl')
+            return pd.read_excel(io.BytesIO(uploaded_file.getvalue()), engine='openpyxl')
     except Exception as e:
         st.error(f"Error reading file: {e}"); return None
 
@@ -379,20 +342,14 @@ def to_excel(df):
     return output.getvalue()
 
 def to_csv(df):
-    # Usa utf-8-sig para garantir compatibilidade com Excel em CSV com acentuação
     return df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
 
 # --- FUNÇÕES DE INTERFACE ---
 
-# ######### INÍCIO DA MODIFICAÇÃO #########
-# Função de callback robusta para o checkbox "selecionar todos"
 def handle_select_all():
-    # Obtém o estado atual do checkbox mestre a partir do session_state
     new_state = st.session_state.get('select_all_master_checkbox', False)
-    # Aplica o novo estado a todas as regras individuais
     for rule in st.session_state.filter_rules:
         rule['p_check'] = new_state
-# ######### FIM DA MODIFICAÇÃO #########
 
 def draw_filter_rules(sex_column_values):
     st.markdown("""<style>
@@ -403,22 +360,18 @@ def draw_filter_rules(sex_column_values):
         }
     </style>""", unsafe_allow_html=True)
     
-    # Adicionado gap="medium" para aumentar o espaçamento entre as colunas
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="medium")
     
-    # ######### INÍCIO DA MODIFICAÇÃO #########
-    # Determina o estado do checkbox "selecionar todos" com base nas regras individuais
     if st.session_state.filter_rules:
         all_checked = all(rule.get('p_check', True) for rule in st.session_state.filter_rules)
     else:
         all_checked = False
 
-    # Renderiza o checkbox "selecionar todos" sem rótulo visível e com o callback
     header_cols[0].checkbox(
         "Select/Deselect all",
         value=all_checked,
-        key='select_all_master_checkbox',  # Chave única para o widget
-        on_change=handle_select_all,      # Função de callback
+        key='select_all_master_checkbox',
+        on_change=handle_select_all,
         label_visibility="collapsed",
         help="Select/Deselect all rules"
     )
@@ -426,7 +379,6 @@ def draw_filter_rules(sex_column_values):
     header_cols[1].markdown("**Column** <span title='Enter the column name. You can use a semicolon (;) to apply the rule to multiple columns. The row will be excluded only if ALL columns meet the condition.'>&#9432;</span>", unsafe_allow_html=True)
     header_cols[2].markdown("**Operator** <span title='Use comparison operators to define the first filter.'>&#9432;</span>", unsafe_allow_html=True)
     header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data.'>&#9432;</span>", unsafe_allow_html=True)
-    # ######### FIM DA MODIFICAÇÃO #########
     
     tooltip_text = """Select another operator to define an interval.
 How to use:
@@ -447,7 +399,6 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
 
     for i, rule in enumerate(st.session_state.filter_rules):
         with st.container():
-            # Adicionado gap="medium" para aumentar o espaçamento
             cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="medium") 
             rule['p_check'] = cols[0].checkbox(" ", value=rule.get('p_check', True), key=f"p_check_{rule['id']}", label_visibility="collapsed")
             rule['p_col'] = cols[1].text_input("Column", value=rule.get('p_col', ''), key=f"p_col_{rule['id']}", label_visibility="collapsed")
@@ -506,7 +457,7 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
 
 def draw_stratum_rules():
     st.markdown("""<style>.stButton>button {padding: 0.25rem 0.3rem; font-size: 0.8rem;}</style>""", unsafe_allow_html=True)
-    ops_stratum = ["", ">", "<", "≥", "≤"] # Operadores para faixa etária de estratificação
+    ops_stratum = ["", ">", "<", "≥", "≤"]
 
     for i, stratum_rule in enumerate(st.session_state.stratum_rules):
         with st.container():
@@ -515,7 +466,7 @@ def draw_stratum_rules():
             
             stratum_rule['op1'] = cols[1].selectbox("Operator 1", ops_stratum, index=ops_stratum.index(stratum_rule.get('op1', '')) if stratum_rule.get('op1') in ops_stratum else 0, key=f"s_op1_{stratum_rule['id']}", label_visibility="collapsed")
             stratum_rule['val1'] = cols[2].text_input("Value 1", value=stratum_rule.get('val1', ''), key=f"s_val1_{stratum_rule['id']}", label_visibility="collapsed")
-            cols[3].markdown("<p style='text-align: center; margin-top: 25px;'>AND</p>", unsafe_allow_html=True) # Alterado para "AND"
+            cols[3].markdown("<p style='text-align: center; margin-top: 25px;'>AND</p>", unsafe_allow_html=True)
             stratum_rule['op2'] = cols[4].selectbox("Operator 2", ops_stratum, index=ops_stratum.index(stratum_rule.get('op2', '')) if stratum_rule.get('op2') in ops_stratum else 0, key=f"s_op2_{stratum_rule['id']}", label_visibility="collapsed")
             stratum_rule['val2'] = cols[5].text_input("Value 2", value=stratum_rule.get('val2', ''), key=f"s_val2_{stratum_rule['id']}", label_visibility="collapsed")
             
@@ -542,17 +493,7 @@ def main():
         return
 
     if 'filter_rules' not in st.session_state: 
-        default_filters_translated = copy.deepcopy(DEFAULT_FILTERS)
-        for rule in default_filters_translated:
-            if rule.get('p_op1') == 'Não é igual a':
-                rule['p_op1'] = 'Not equal to'
-            if rule.get('p_op_central') == 'OU':
-                rule['p_op_central'] = 'OR'
-            elif rule.get('p_op_central') == 'E':
-                rule['p_op_central'] = 'AND'
-            elif rule.get('p_op_central') == 'ENTRE':
-                rule['p_op_central'] = 'BETWEEN'
-        st.session_state.filter_rules = [dict(r) for r in default_filters_translated]
+        st.session_state.filter_rules = copy.deepcopy(DEFAULT_FILTERS)
 
     if 'stratum_rules' not in st.session_state: st.session_state.stratum_rules = [{'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''}]
     
@@ -567,24 +508,45 @@ def main():
         uploaded_file = st.file_uploader("Select spreadsheet", type=['csv', 'xlsx', 'xls'])
         df = load_dataframe(uploaded_file)
         
-        column_options = []
-        if df is not None: column_options = [""] + df.columns.tolist()
+        column_options = [""] + df.columns.tolist() if df is not None else [""]
         
         c1, c2, c3 = st.columns(3)
-        with c1: 
-            st.selectbox("Age Column", options=column_options, key="col_idade")
-        with c2: 
-            st.selectbox("Sex/Gender Column", options=column_options, key="col_sexo")
-        with c3: 
-            st.selectbox("Output Format", ["CSV (.csv)", "Excel (.xlsx)"], key="output_format")
+        with c1: st.selectbox("Age Column", options=column_options, key="col_idade")
+        with c2: st.selectbox("Sex/Gender Column", options=column_options, key="col_sexo")
+        with c3: st.selectbox("Output Format", ["CSV (.csv)", "Excel (.xlsx)"], key="output_format")
 
+        st.session_state.sex_column_is_valid = True
+        st.session_state.age_column_is_valid = True
         sex_column_values = []
-        if df is not None and st.session_state.col_sexo:
-            try:
-                sex_column_values = [""] + df[st.session_state.col_sexo].dropna().unique().tolist()
-            except KeyError:
-                st.warning(f"Column '{st.session_state.col_sexo}' not found. Please select the correct column.")
 
+        if df is not None:
+            if st.session_state.col_sexo:
+                try:
+                    unique_sex_values = df[st.session_state.col_sexo].dropna().unique()
+                    if len(unique_sex_values) > 5:
+                        st.warning(f"A coluna '{st.session_state.col_sexo}' possui {len(unique_sex_values)} valores únicos, excedendo o limite de 5. A estratificação por gênero foi desativada.")
+                        st.session_state.sex_column_is_valid = False
+                    else:
+                        sex_column_values = [""] + list(unique_sex_values)
+                except KeyError:
+                    st.warning(f"Coluna '{st.session_state.col_sexo}' não encontrada."); st.session_state.sex_column_is_valid = False
+
+            if st.session_state.col_idade:
+                try:
+                    age_col = df[st.session_state.col_idade].dropna()
+                    numeric_ages = pd.to_numeric(age_col, errors='coerce')
+                    non_numeric_ratio = numeric_ages.isna().sum() / len(age_col) if len(age_col) > 0 else 0
+
+                    if non_numeric_ratio > 0.2:
+                        st.warning(f"A coluna '{st.session_state.col_idade}' não parece conter dados de idade válidos (mais de 20% não são números). As funções que dependem da idade estão desativadas.")
+                        st.session_state.age_column_is_valid = False
+                    elif age_col.nunique() > 120:
+                        st.warning(f"A coluna '{st.session_state.col_idade}' possui {age_col.nunique()} valores únicos, excedendo o limite de 120.")
+                except KeyError:
+                    st.warning(f"Coluna '{st.session_state.col_idade}' não encontrada."); st.session_state.age_column_is_valid = False
+
+    is_ready_for_processing = st.session_state.age_column_is_valid and st.session_state.sex_column_is_valid
+    
     tab_filter, tab_stratify = st.tabs(["2. Filter Tool", "3. Stratification Tool"])
 
     with tab_filter:
@@ -593,7 +555,8 @@ def main():
         if st.button("Add New Filter Rule"):
             st.session_state.filter_rules.append({'id': str(uuid.uuid4()), 'p_check': True, 'p_col': '', 'p_op1': '<', 'p_val1': '', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''})
             st.rerun()
-        if st.button("Generate Filtered Sheet", type="primary", use_container_width=True):
+        
+        if st.button("Generate Filtered Sheet", type="primary", use_container_width=True, disabled=not is_ready_for_processing):
             if df is None: st.error("Please upload a spreadsheet first.")
             else:
                 with st.spinner("Applying filters... Please wait."):
@@ -601,19 +564,28 @@ def main():
                     processor = get_data_processor()
                     global_config = {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}
                     filtered_df = processor.apply_filters(df, st.session_state.filter_rules, global_config, progress_bar)
-                    st.success(f"Spreadsheet filtered successfully! {len(filtered_df)} rows remaining.")
-                    is_excel = "Excel" in st.session_state.output_format
-                    file_bytes = to_excel(filtered_df) if is_excel else to_csv(filtered_df)
-                    timestamp = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d_%H%M%S")
-                    file_name = f"Filtered_Sheet_{timestamp}.{'xlsx' if is_excel else 'csv'}"
-                    st.session_state.filtered_result = (file_bytes, file_name)
+                    
+                    if filtered_df.empty:
+                        st.success("Filtros aplicados com sucesso! Nenhuma linha corresponde aos critérios para permanecer na planilha.")
+                        if 'filtered_result' in st.session_state: del st.session_state['filtered_result']
+                    else:
+                        st.success(f"Spreadsheet filtered successfully! {len(filtered_df)} rows remaining.")
+                        is_excel = "Excel" in st.session_state.output_format
+                        file_bytes = to_excel(filtered_df) if is_excel else to_csv(filtered_df)
+                        timestamp = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d_%H%M%S")
+                        file_name = f"Filtered_Sheet_{timestamp}.{'xlsx' if is_excel else 'csv'}"
+                        st.session_state.filtered_result = (file_bytes, file_name)
+
         if 'filtered_result' in st.session_state:
             st.download_button("Download Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True)
 
     with tab_stratify:
         st.header("Stratification Options by Sex/Gender")
-        if not sex_column_values:
-            st.info("Upload a spreadsheet and select the 'Sex/Gender Column' in Global Settings to see the options.")
+        
+        if not st.session_state.sex_column_is_valid:
+            st.info("Select a valid 'Sex/Gender Column' in Global Settings with 5 or fewer unique values to see options.")
+        elif not sex_column_values:
+            st.info("Upload a spreadsheet and select the 'Sex/Gender Column' in Global Settings to see options.")
         else:
             if 'strat_gender_selection' not in st.session_state:
                 st.session_state.strat_gender_selection = {val: True for val in sex_column_values if val}
@@ -630,11 +602,19 @@ def main():
         if st.button("Add Age Range"):
             st.session_state.stratum_rules.append({'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''})
             st.rerun()
-        if st.button("Generate Stratified Sheets", type="primary", use_container_width=True):
+        
+        if st.button("Generate Stratified Sheets", type="primary", use_container_width=True, disabled=not is_ready_for_processing):
             st.session_state.confirm_stratify = True
             st.rerun()
+
         if st.session_state.get('confirm_stratify', False):
-            st.warning("Do you confirm that the selected spreadsheet is the FILTERED version?")
+            age_rules_count = len([r for r in st.session_state.stratum_rules if r.get('val1')])
+            sex_rules_count = sum(1 for val, selected in st.session_state.get('strat_gender_selection', {}).items() if selected)
+            total_files = age_rules_count * sex_rules_count if age_rules_count > 0 and sex_rules_count > 0 else age_rules_count + sex_rules_count
+            
+            warning_msg = f"Atenção: Esta operação irá gerar {total_files} arquivos." if total_files > 30 else ""
+            st.warning(f"Do you confirm that the selected spreadsheet is the FILTERED version? {warning_msg}")
+
             c1, c2 = st.columns(2)
             if c1.button("Yes, continue", use_container_width=True):
                 if df is None: st.error("Please upload a spreadsheet first.")
@@ -643,10 +623,7 @@ def main():
                         progress_bar = st.progress(0, text="Initializing...")
                         processor = get_data_processor()
                         age_rules = [r for r in st.session_state.stratum_rules if r.get('val1')]
-                        sex_rules = []
-                        for gender_val, is_selected in st.session_state.get('strat_gender_selection', {}).items():
-                            if is_selected:
-                                sex_rules.append({'value': gender_val, 'name': str(gender_val)})
+                        sex_rules = [{'value': gender_val, 'name': str(gender_val)} for gender_val, is_selected in st.session_state.get('strat_gender_selection', {}).items() if is_selected]
                         
                         strata_config = {'ages': age_rules, 'sexes': sex_rules}
                         global_config = {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}
