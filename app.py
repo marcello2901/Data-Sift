@@ -58,7 +58,7 @@ Each row you add is a condition to **remove** data. If a row in your spreadsheet
 
 - **[✓] (Activation Checkbox):** Toggles a rule on or off without deleting it.
 
-- **Column:** The name of the column where the filter will be applied. **Tip:** You can apply the rule to multiple columns at once by separating their names with a semicolon (;). When doing so, a row will be excluded only if all specified columns meet the condition.
+- **Column:** The name of the column where the filter will be applied. **Tip:** You can apply the rule to multiple columns at once by separating their names with a semicolon (;). When doing so, a row will be excluded only if **all** specified columns meet the condition.
 
 - **Operator and Value:** Operators ">", "<", "≥", "≤", "=", "Not equal to" define the rule's logic. They are used to define the ranges that will be considered for data **exclusion**.
 **Tip:** The keyword `vazio` (empty) is a powerful feature:
@@ -216,19 +216,28 @@ class DataProcessor:
             for col in cols_to_check:
                 if col in df_processado.columns and is_numeric_filter:
                     df_processado[col] = self._safe_to_numeric(df_processado[col])
-
-            main_mask = pd.Series(True, index=df_processado.index)
-            for sub_col in cols_to_check:
-                if sub_col not in df_processado.columns:
-                    # Se a coluna não existir, essa sub-regra não se aplica (ou falha)
-                    main_mask = pd.Series(False, index=df_processado.index)
-                    break # Se uma coluna não existe, a máscara principal para esta regra é falsa
-                main_mask &= self._create_main_mask(df_processado, f_config, sub_col)
             
+            # Alterado de 'OR' (any) para 'AND' (all)
+            final_col_mask = pd.Series(False, index=df_processado.index)
+            if cols_to_check:
+                # Inicia com a máscara da primeira coluna
+                if cols_to_check[0] in df_processado.columns:
+                    # Começa com uma máscara que é True para todas as linhas
+                    combined_mask = pd.Series(True, index=df_processado.index)
+                    for sub_col in cols_to_check:
+                        if sub_col in df_processado.columns:
+                            # A máscara final é o AND de todas as máscaras de coluna
+                            combined_mask &= self._create_main_mask(df_processado, f_config, sub_col)
+                        else:
+                            # Se uma coluna não existe, a condição para esta regra falha
+                            combined_mask = pd.Series(False, index=df_processado.index)
+                            break
+                    final_col_mask = combined_mask
+                
             conditional_mask = self._create_conditional_mask(df_processado, f_config, global_config)
-            final_mask = main_mask & conditional_mask # A máscara final é a combinação da principal e da condicional
+            final_mask_to_exclude = final_col_mask & conditional_mask
             
-            df_processado = df_processado[~final_mask] # Remove as linhas que correspondem à máscara final
+            df_processado = df_processado[~final_mask_to_exclude]
         
         progress_bar.progress(1.0, text="Filtering complete!")
         return df_processado
@@ -381,6 +390,16 @@ def to_csv(df):
 
 # --- FUNÇÕES DE INTERFACE ---
 
+# ######### INÍCIO DA MODIFICAÇÃO #########
+# Nova função de callback para o checkbox "selecionar todos"
+def toggle_all_rules():
+    # Pega o estado atual do checkbox mestre
+    new_state = st.session_state.get('select_all_filters', False)
+    # Aplica o novo estado a todas as regras individuais
+    for rule in st.session_state.filter_rules:
+        rule['p_check'] = new_state
+# ######### FIM DA MODIFICAÇÃO #########
+
 def draw_filter_rules(sex_column_values):
     st.markdown("""<style>
         .stButton>button { padding: 0.25rem 0.3rem; font-size: 0.8rem; white-space: nowrap; }
@@ -391,6 +410,24 @@ def draw_filter_rules(sex_column_values):
     </style>""", unsafe_allow_html=True)
     
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5])
+    
+    # ######### INÍCIO DA MODIFICAÇÃO #########
+    # Determina o estado do checkbox "selecionar todos"
+    if st.session_state.filter_rules:
+        all_checked = all(rule.get('p_check', True) for rule in st.session_state.filter_rules)
+    else:
+        all_checked = False
+
+    # Adiciona o checkbox "selecionar todos" no cabeçalho da primeira coluna
+    header_cols[0].checkbox(
+        "✓",
+        value=all_checked,
+        key='select_all_filters',
+        on_change=toggle_all_rules,
+        help="Select/Deselect all rules"
+    )
+    # ######### FIM DA MODIFICAÇÃO #########
+    
     header_cols[1].markdown("**Column** <span title='Enter the column name. '>&#9432;</span>", unsafe_allow_html=True)
     header_cols[2].markdown("**Operator** <span title='Use comparison operators to define the first filter. '>&#9432;</span>", unsafe_allow_html=True)
     header_cols[3].markdown("**Value** <span title='Enter the value you want to exclude from the data. '>&#9432;</span>", unsafe_allow_html=True)
@@ -408,10 +445,9 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
     header_cols[7].markdown("**Actions** <span title='Use to duplicate or delete a rule. '>&#9432;</span>", unsafe_allow_html=True)
     st.markdown("<hr style='margin-top: -0.5rem; margin-bottom: 0.5rem;'>", unsafe_allow_html=True)
 
-    # Operadores para a UI, agora em inglês (ou o que for comum)
-    ops_main = ["", ">", "<", "=", "Not equal to", "≥", "≤"] # "Not equal to" para "Não é igual a"
-    ops_age = ["", ">", "<", "≥", "≤", "="] # Mantido aqui para a condição de idade, se necessário
-    ops_central_logic = ["AND", "OR", "BETWEEN"] # Novos operadores centrais em inglês
+    ops_main = ["", ">", "<", "=", "Not equal to", "≥", "≤"]
+    ops_age = ["", ">", "<", "≥", "≤", "="]
+    ops_central_logic = ["AND", "OR", "BETWEEN"]
 
     for i, rule in enumerate(st.session_state.filter_rules):
         with st.container():
@@ -419,17 +455,13 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
             rule['p_check'] = cols[0].checkbox(" ", value=rule.get('p_check', True), key=f"p_check_{rule['id']}", label_visibility="collapsed")
             rule['p_col'] = cols[1].text_input("Column", value=rule.get('p_col', ''), key=f"p_col_{rule['id']}", label_visibility="collapsed")
             
-            # Use ops_main para os seletores de operador
             rule['p_op1'] = cols[2].selectbox("Operator 1", ops_main, index=ops_main.index(rule.get('p_op1', '=')) if rule.get('p_op1') in ops_main else 0, key=f"p_op1_{rule['id']}", label_visibility="collapsed")
             rule['p_val1'] = cols[3].text_input("Value 1", value=rule.get('p_val1', ''), key=f"p_val1_{rule['id']}", label_visibility="collapsed")
             rule['p_expand'] = cols[4].checkbox("+", value=rule.get('p_expand', False), key=f"p_expand_{rule['id']}", label_visibility="collapsed")
             
             with cols[5]:
                 if rule['p_expand']:
-                    # Ajuste da proporção das colunas para dar mais espaço ao seletor de lógica
                     exp_cols = st.columns([3, 2, 2])
-                    
-                    # Usar ops_central_logic para os seletores de lógica composta
                     rule['p_op_central'] = exp_cols[0].selectbox("Logic", ops_central_logic, index=ops_central_logic.index(rule.get('p_op_central', 'OR')) if rule.get('p_op_central') in ops_central_logic else 0, key=f"p_op_central_{rule['id']}", label_visibility="collapsed")
                     rule['p_op2'] = exp_cols[1].selectbox("Operator 2", ops_main, index=ops_main.index(rule.get('p_op2', '>')) if rule.get('p_op2') in ops_main else 0, key=f"p_op2_{rule['id']}", label_visibility="collapsed")
                     rule['p_val2'] = exp_cols[2].text_input("Value 2", value=rule.get('p_val2', ''), key=f"p_val2_{rule['id']}", label_visibility="collapsed")
@@ -459,15 +491,12 @@ AND: Excludes values within an interval, without the extremes. Ex: > 10 AND < 20
                             rule['c_idade_op1'] = age_cols[0].selectbox("Age Op 1", ops_age, index=ops_age.index(rule.get('c_idade_op1','>')) if rule.get('c_idade_op1') in ops_age else 0, key=f"c_idade_op1_{rule['id']}", label_visibility="collapsed")
                             rule['c_idade_val1'] = age_cols[1].text_input("Age Val 1", value=rule.get('c_idade_val1',''), key=f"c_idade_val1_{rule['id']}", label_visibility="collapsed")
                             
-                            # ######### INÍCIO DA CORREÇÃO #########
-                            # HTML/CSS para centralizar verticalmente o texto "AND"
                             centered_and_html = """
                             <div style="display: flex; justify-content: center; align-items: center; height: 38px;">
                                 AND
                             </div>
                             """
                             age_cols[2].markdown(centered_and_html, unsafe_allow_html=True)
-                            # ######### FIM DA CORREÇÃO #########
                             
                             rule['c_idade_op2'] = age_cols[3].selectbox("Age Op 2", ops_age, index=ops_age.index(rule.get('c_idade_op2','<')) if rule.get('c_idade_op2') in ops_age else 0, key=f"c_idade_op2_{rule['id']}", label_visibility="collapsed")
                             rule['c_idade_val2'] = age_cols[4].text_input("Age Val 2", value=rule.get('c_idade_val2',''), key=f"c_idade_val2_{rule['id']}", label_visibility="collapsed")
@@ -508,7 +537,6 @@ def main():
         st.markdown("This program is designed to optimize your work with large volumes of data, offering features to exclude data from spreadsheets using filters and to stratify the filtered spreadsheet. Please read the terms below to proceed.")
         st.divider()
         st.header("Terms of Use and Data Protection Compliance")
-        # Mantém GDPR_TERMS (já traduzido na versão anterior)
         st.markdown(GDPR_TERMS) 
         accepted = st.checkbox("By checking this box, I confirm that the data provided is anonymized and contains no sensitive personal data.")
         if st.button("Continue", disabled=not accepted):
@@ -517,19 +545,16 @@ def main():
         return
 
     if 'filter_rules' not in st.session_state: 
-        # Atualizando os valores padrão para 'Not equal to'
         default_filters_translated = copy.deepcopy(DEFAULT_FILTERS)
         for rule in default_filters_translated:
             if rule.get('p_op1') == 'Não é igual a':
                 rule['p_op1'] = 'Not equal to'
-            # Se a lógica composta tiver 'OU' ou 'E' ou 'ENTRE' como padrão, ajustar aqui
             if rule.get('p_op_central') == 'OU':
                 rule['p_op_central'] = 'OR'
             elif rule.get('p_op_central') == 'E':
                 rule['p_op_central'] = 'AND'
             elif rule.get('p_op_central') == 'ENTRE':
                 rule['p_op_central'] = 'BETWEEN'
-
         st.session_state.filter_rules = [dict(r) for r in default_filters_translated]
 
     if 'stratum_rules' not in st.session_state: st.session_state.stratum_rules = [{'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''}]
@@ -537,7 +562,6 @@ def main():
     with st.sidebar:
         st.title("User Manual")
         topic = st.selectbox("Select a topic", list(MANUAL_CONTENT.keys()), label_visibility="collapsed")
-        # Mantém MANUAL_CONTENT (já traduzido na versão anterior)
         st.markdown(MANUAL_CONTENT[topic], unsafe_allow_html=True)
 
     st.title("Data Sift")
@@ -570,7 +594,6 @@ def main():
         st.header("Exclusion Rules")
         draw_filter_rules(sex_column_values)
         if st.button("Add New Filter Rule"):
-            # A nova regra deve ter 'OR' como padrão para p_op_central
             st.session_state.filter_rules.append({'id': str(uuid.uuid4()), 'p_check': True, 'p_col': '', 'p_op1': '<', 'p_val1': '', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''})
             st.rerun()
         if st.button("Generate Filtered Sheet", type="primary", use_container_width=True):
