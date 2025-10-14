@@ -58,7 +58,7 @@ Each row you add is a condition to **remove** data. If a row in your spreadsheet
 
 - **[✓] (Activation Checkbox):** Toggles a rule on or off without deleting it.
 
-- **Column:** The name of the column where the filter will be applied. Tip: You can apply the rule to multiple columns at once by separating their names with a semicolon (;). When doing so, a row will be excluded only if all specified columns meet the condition.
+- **Column:** The name of the column where the filter will be applied. **Tip:** You can apply the rule to multiple columns at once by separating their names with a semicolon (;). When doing so, a row will be excluded only if all specified columns meet the condition.
 
 - **Operator and Value:** Operators ">", "<", "≥", "≤", "=", "Not equal to" define the rule's logic. They are used to define the ranges that will be considered for data **exclusion**.
 **Tip:** The keyword `vazio` (empty) is a powerful feature:
