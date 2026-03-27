@@ -1,6 +1,5 @@
-pandas
-openpyxl
-xlrd
-Pillow
-streamlit
+streamlit==1.32.2
+pandas==2.2.2
+numpy==1.26.4
+openpyxl==3.1.2
 altair==4.2.2
