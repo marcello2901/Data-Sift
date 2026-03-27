@@ -14,6 +14,9 @@ import duckdb
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
+import tempfile
+import os
+import shutil
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(layout="wide", page_title="Data Sift")
@@ -351,58 +354,77 @@ class DataProcessor:
 
 # --- FUNÇÕES AUXILIARES OTIMIZADAS ---
 
-@st.cache_data(show_spinner="Lendo arquivo original...")
+@st.cache_data(show_spinner="Lendo arquivo (Modo Econômico de Memória)...")
 def load_dataframe(uploaded_file):
     if uploaded_file is None: return None
     try:
         file_name = uploaded_file.name.lower()
         
+        # 1. STREAMING PARA O DISCO: Evita clonar o arquivo gigante na memória RAM
+        uploaded_file.seek(0)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
+            shutil.copyfileobj(uploaded_file, tmp_file)
+            tmp_path = tmp_file.name
+
+        df = None
+
         # --- LÓGICA DE TRATAMENTO DE ZIP ---
         if file_name.endswith('.zip'):
-            with zipfile.ZipFile(uploaded_file) as z:
+            with zipfile.ZipFile(tmp_path) as z:
                 valid_files = [f for f in z.namelist() if not f.startswith('__MACOSX/') and 
                                (f.lower().endswith('.csv') or f.lower().endswith(('.xlsx', '.xls')))]
                 
                 if not valid_files:
-                    st.error("ZIP does not contain valid CSV or Excel files.")
+                    st.error("O ZIP não contém arquivos CSV ou Excel válidos.")
+                    os.remove(tmp_path)
                     return None
                 
-                with z.open(valid_files[0]) as f:
-                    content = f.read()
-                    inner_filename = valid_files[0].lower()
-                    
-                    if inner_filename.endswith('.csv'):
-                        try:
-                            df = pd.read_csv(io.BytesIO(content), sep=';', decimal=',', encoding='latin-1', low_memory=False)
-                        except Exception:
-                            df = pd.read_csv(io.BytesIO(content), sep=',', decimal='.', encoding='utf-8', low_memory=False)
-                    else:
-                        df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
-        
-        # --- LÓGICA ORIGINAL PARA ARQUIVOS DIRETOS ---
+                # Extrai o arquivo para o disco temporário
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(valid_files[0])[1]) as inner_tmp:
+                    inner_tmp.write(z.read(valid_files[0]))
+                    inner_path = inner_tmp.name
+                
+                inner_filename = valid_files[0].lower()
+                
+                if inner_filename.endswith('.csv'):
+                    try:
+                        # 2. MOTOR PYARROW: Leitura super rápida com metade do custo de memória
+                        df = pd.read_csv(inner_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
+                    except Exception:
+                        df = pd.read_csv(inner_path, sep=',', decimal='.', encoding='utf-8', engine='pyarrow')
+                else:
+                    df = pd.read_excel(inner_path, engine='openpyxl')
+                
+                os.remove(inner_path)
+
+        # --- LÓGICA PARA ARQUIVOS DIRETOS ---
         elif file_name.endswith('.csv'):
-            uploaded_file.seek(0)
             try: 
-                df = pd.read_csv(io.BytesIO(uploaded_file.getvalue()), sep=';', decimal=',', encoding='latin-1', low_memory=False)
+                df = pd.read_csv(tmp_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
             except Exception:
-                uploaded_file.seek(0)
-                df = pd.read_csv(io.BytesIO(uploaded_file.getvalue()), sep=',', decimal='.', encoding='utf-8', low_memory=False)
+                df = pd.read_csv(tmp_path, sep=',', decimal='.', encoding='utf-8', engine='pyarrow')
         else:
-            uploaded_file.seek(0)
-            df = pd.read_excel(io.BytesIO(uploaded_file.getvalue()), engine='openpyxl')
+            df = pd.read_excel(tmp_path, engine='openpyxl')
 
-        fcols = df.select_dtypes('float').columns
-        icols = df.select_dtypes('integer').columns
-        df[fcols] = df[fcols].apply(pd.to_numeric, downcast='float')
-        df[icols] = df[icols].apply(pd.to_numeric, downcast='integer')
+        # Limpa o arquivo temporário do disco para liberar espaço
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
-        for col in df.select_dtypes('object').columns:
-            if df[col].nunique() / len(df[col]) < 0.5:
-                df[col] = df[col].astype('category')
+        # --- DOWNCASTING (Mantido da sua versão original) ---
+        if df is not None:
+            fcols = df.select_dtypes('float').columns
+            icols = df.select_dtypes('integer').columns
+            df[fcols] = df[fcols].apply(pd.to_numeric, downcast='float')
+            df[icols] = df[icols].apply(pd.to_numeric, downcast='integer')
+
+            for col in df.select_dtypes('object').columns:
+                if df[col].nunique() / len(df[col]) < 0.5:
+                    df[col] = df[col].astype('category')
         
         return df
     except Exception as e:
-        st.error(f"Error reading file: {e}"); return None
+        st.error(f"Erro ao ler o arquivo: {e}")
+        return None
 
 @st.cache_data(show_spinner="Preparando arquivo para exportação...")
 def to_excel(df):
