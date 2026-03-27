@@ -13,6 +13,8 @@ import zipfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
+import duckdb
+import tempfile
 
 st.set_page_config(layout="wide", page_title="Data Sift")
 
@@ -119,8 +121,14 @@ DEFAULT_FILTERS = [
 # --- PROCESSOR ---
 
 @st.cache_resource
-def get_data_processor():
-    return DataProcessor()
+def get_duckdb_conn():
+    return duckdb.connect()
+
+def save_uploaded_file(uploaded_file):
+    temp = tempfile.NamedTemporaryFile(delete=False)
+    temp.write(uploaded_file.getbuffer())
+    temp.close()
+    return temp.name
 
 class DataProcessor:
     OPERATOR_MAP = {'=': '==', 'Não é igual a': '!=', '≥': '>=', '≤': '<=', 'is equal to': '==', 'Not equal to': '!='}
@@ -194,45 +202,44 @@ class DataProcessor:
 
         return mask
 
-    def apply_filters(self, df, filters_config, global_config, progress_bar):
+    def apply_filters_duckdb(file_path, filters_config):
 
-        df_processado = df  # 🔥 sem cópia
+    con = get_duckdb_conn()
 
-        converted_cols = set()
+    query = "SELECT * FROM read_csv_auto(?) WHERE TRUE"
 
-        active_filters = [f for f in filters_config if f['p_check']]
-        total = len(active_filters)
+    params = [file_path]
 
-        for i, f in enumerate(active_filters):
+    for f in filters_config:
+        if not f['p_check']:
+            continue
 
-            progress_bar.progress((i+1)/total)
+        col = f['p_col']
+        op = f['p_op1']
+        val = f['p_val1']
 
-            cols = [c.strip() for c in f.get('p_col', '').split(';') if c.strip()]
-            is_numeric = f.get('p_val1', '').lower() != 'empty'
+        if val.lower() == "empty":
+            if op in ["=", "is equal to"]:
+                query += f" AND ({col} IS NULL OR {col} = '')"
+            elif op in ["Not equal to"]:
+                query += f" AND ({col} IS NOT NULL AND {col} != '')"
+            continue
 
-            for col in cols:
-                if col in df_processado.columns and is_numeric:
-                    if col not in converted_cols:
-                        df_processado[col] = self._safe_to_numeric(df_processado[col])
-                        converted_cols.add(col)
+        try:
+            val = float(str(val).replace(",", "."))
+        except:
+            continue
 
-            if not cols:
-                continue
+        if op == ">":
+            query += f" AND {col} <= {val}"
+        elif op == "<":
+            query += f" AND {col} >= {val}"
+        elif op == "=":
+            query += f" AND {col} != {val}"
 
-            combined_mask = pd.Series(True, index=df_processado.index)
+    df = con.execute(query, params).df()
 
-            for col in cols:
-                if col in df_processado.columns:
-                    combined_mask &= self._create_main_mask(df_processado, f, col)
-                else:
-                    combined_mask = pd.Series(False, index=df_processado.index)
-
-            conditional_mask = self._create_conditional_mask(df_processado, f, global_config)
-            final_mask = combined_mask & conditional_mask
-
-            df_processado = df_processado.loc[~final_mask]
-
-        return df_processado
+    return df
 
     def apply_stratification(self, df, strata_config, global_config, progress_bar):
 
@@ -262,7 +269,7 @@ class DataProcessor:
 # --- LOAD DATAFRAME OTIMIZADO ---
 
 @st.cache_data
-def load_dataframe(uploaded_file):
+file_path = save_uploaded_file(uploaded_file):
     if uploaded_file is None:
         return None
 
@@ -341,20 +348,7 @@ def main():
 
             progress = st.progress(0)
 
-            result = processor.apply_filters(
-                df,
-                DEFAULT_FILTERS,
-                {"coluna_idade": None, "coluna_sexo": None},
-                progress
-            )
-
-            st.success(f"{len(result)} linhas restantes")
-
-            st.download_button(
-                "Download CSV",
-                to_csv(result),
-                "resultado.csv"
-            )
+            result = apply_filters_duckdb(file_path, DEFAULT_FILTERS)
 
 
 if __name__ == "__main__":
