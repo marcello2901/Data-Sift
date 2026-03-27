@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.0.0 - Atualização: Otimização com Motor SQL DuckDB
+# Versão 2.1.0 - Atualização: Otimização com Motor SQL DuckDB e Preservação de Precisão
 # Melhorias: Processamento de dados extremamente rápido via DuckDB para não travar o Streamlit.
+# Correção: Remoção do downcasting numérico para manter a precisão original dos dados.
 
 import streamlit as st
 import pandas as pd
@@ -258,7 +259,7 @@ class DataProcessor:
         try:
             progress_bar.progress(0.8, text="Executando Motor DuckDB (SQL)...")
             filtered_df = duckdb.query(query).df()
-            progress_bar.progress(1.0, text="Filters applied successfully!")
+            progress_bar.progress(1.0, text="Filtering complete!")
             return filtered_df
         except Exception as e:
             st.error(f"Erro no processamento SQL: {e}")
@@ -423,13 +424,8 @@ def load_dataframe(uploaded_file):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-        # --- DOWNCASTING (Mantido da sua versão original) ---
+        # Apenas otimiza colunas de texto (preserva todos os números intactos)
         if df is not None:
-            fcols = df.select_dtypes('float').columns
-            icols = df.select_dtypes('integer').columns
-            df[fcols] = df[fcols].apply(pd.to_numeric, downcast='float')
-            df[icols] = df[icols].apply(pd.to_numeric, downcast='integer')
-
             for col in df.select_dtypes('object').columns:
                 if df[col].nunique() / len(df[col]) < 0.5:
                     df[col] = df[col].astype('category')
