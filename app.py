@@ -20,6 +20,19 @@ import shutil
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(layout="wide", page_title="Data Sift")
+st.markdown("""
+    <style>
+        /* Remove o esmaecimento da tela ao clicar nos filtros */
+        [data-testid="stAppViewBlockContainer"] {
+            opacity: 1 !important;
+            transition: none !important;
+        }
+        /* Esconde o aviso "Running..." no canto superior direito */
+        [data-testid="stStatusWidget"] {
+            visibility: hidden;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 # --- CONSTANTES E DADOS ---
 GDPR_TERMS = """
