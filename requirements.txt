@@ -3,3 +3,4 @@ openpyxl
 xlrd
 Pillow
 streamlit
+altair==4.2.2
