@@ -367,7 +367,7 @@ class DataProcessor:
 
 # --- FUNÇÕES AUXILIARES OTIMIZADAS ---
 
-@st.cache_data(show_spinner="Lendo arquivo (Modo Econômico de Memória)...")
+@st.cache_data(show_spinner="Lendo arquivo...")
 def load_dataframe(uploaded_file):
     if uploaded_file is None: return None
     try:
