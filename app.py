@@ -624,7 +624,24 @@ def main():
             on_change=reset_results_on_upload,
             key="file_uploader_widget"
         )
-        df = load_dataframe(uploaded_file)
+
+        # --- NOVA LÓGICA DE MEMÓRIA (Evita lentidão ao clicar nos filtros) ---
+        if "dados_salvos" not in st.session_state:
+            st.session_state.dados_salvos = None
+        if "id_arquivo_atual" not in st.session_state:
+            st.session_state.id_arquivo_atual = None
+
+        if uploaded_file is not None:
+            # Só aciona a leitura se for um arquivo realmente novo
+            if st.session_state.id_arquivo_atual != uploaded_file.file_id:
+                st.session_state.dados_salvos = load_dataframe(uploaded_file)
+                st.session_state.id_arquivo_atual = uploaded_file.file_id
+        else:
+            # Limpa a memória se o usuário fechar o arquivo
+            st.session_state.dados_salvos = None
+            st.session_state.id_arquivo_atual = None
+
+        df = st.session_state.dados_salvos
         column_options = df.columns.tolist() if df is not None else []
         c1, c2, c3 = st.columns(3)
         with c1: st.selectbox("Age Column", options=column_options, key="col_idade", index=None, placeholder="Select the Age column")
