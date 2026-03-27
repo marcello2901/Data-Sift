@@ -1,18 +1,9 @@
 # -*- coding: utf-8 -*-
 
-# Versão 1.9.5 - OTIMIZADA
-# Melhorias: performance, memória e estabilidade para arquivos grandes
-
 import streamlit as st
 import pandas as pd
-import numpy as np
 import io
 import uuid
-import copy
-import zipfile
-from datetime import datetime
-from zoneinfo import ZoneInfo
-from typing import List, Dict, Any, Optional
 import duckdb
 import tempfile
 
@@ -25,7 +16,9 @@ It is your sole responsibility to ensure that all data used in this tool complie
 
 The responsibility for the nature of the processed data is exclusively yours.
 
-To proceed, you must confirm that the data to be used has been properly handled and anonymized."""  # (mantido igual)
+To proceed, you must confirm that the data to be used has been properly handled and anonymized."""
+
+
 MANUAL_CONTENT = {
     "Introduction": """**Welcome to Data Sift!**
 
@@ -88,7 +81,8 @@ Unlike the filter, the purpose of this tool is to **split** your spreadsheet int
 - **Generate Stratified Sheets:**
   - Starts the splitting process. The number of generated files will be (`number of age ranges` x `number of selected genders`).
   - **Confirmation:** Before starting, the program will ask if you are using an already filtered spreadsheet."""
-}  # (mantido igual)
+}
+
 DEFAULT_FILTERS = [
     {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'CAPA.IST', 'p_op1': '<', 'p_val1': '15', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '50', 'c_check': False},
     {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Ferritina.FERRI', 'p_op1': '<', 'p_val1': '15', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '600', 'c_check': False},
@@ -116,10 +110,10 @@ DEFAULT_FILTERS = [
     {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'TGO.TGO', 'p_op1': '>', 'p_val1': '40', 'p_expand': False, 'c_check': False},
     {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.LEUCO', 'p_op1': '>', 'p_val1': '11000', 'p_expand': False, 'c_check': False},
     {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.#HGB', 'p_op1': '<', 'p_val1': '7', 'p_expand': False, 'c_check': False},
-] # (mantido igual)
+]
 
-# --- PROCESSOR ---
 
+# --- DUCKDB SETUP ---
 @st.cache_resource
 def get_duckdb_conn():
     return duckdb.connect()
@@ -130,84 +124,10 @@ def save_uploaded_file(uploaded_file):
     temp.close()
     return temp.name
 
-class DataProcessor:
-    OPERATOR_MAP = {'=': '==', 'Não é igual a': '!=', '≥': '>=', '≤': '<=', 'is equal to': '==', 'Not equal to': '!='}
-
-    def _safe_to_numeric(self, series: pd.Series) -> pd.Series:
-        if pd.api.types.is_numeric_dtype(series):
-            return series
-
-        # evita reconversões
-        if hasattr(series, "_is_numeric_converted"):
-            return series
-
-        result = pd.to_numeric(
-            series.astype(str).str.replace(',', '.', regex=False),
-            errors='coerce'
-        )
-        result._is_numeric_converted = True
-        return result
-
-    def _build_single_mask(self, series: pd.Series, op: str, val: Any) -> pd.Series:
-        if isinstance(val, str):
-            val_lower_strip = val.lower().strip()
-            series_lower_strip = series.astype(str).str.strip().str.lower()
-            if op == '==': return series_lower_strip == val_lower_strip
-            elif op == '!=': return series_lower_strip != val_lower_strip
-        return eval(f"series {op} val")
-
-    def _create_main_mask(self, df: pd.DataFrame, f: Dict, col: str) -> pd.Series:
-        op1 = self.OPERATOR_MAP.get(f.get('p_op1'), f.get('p_op1'))
-        val1 = f.get('p_val1')
-
-        if val1 and val1.lower() == 'empty':
-            if op1 == '==': return df[col].isna() | (df[col].astype(str).str.strip() == '')
-            if op1 == '!=': return df[col].notna() & (df[col].astype(str).str.strip() != '')
-            return pd.Series(False, index=df.index)
-
-        try:
-            if f.get('p_expand'):
-                v1 = float(str(val1).replace(',', '.'))
-                op2 = self.OPERATOR_MAP.get(f.get('p_op2'), f.get('p_op2'))
-                v2 = float(str(f.get('p_val2')).replace(',', '.'))
-
-                m1 = self._build_single_mask(df[col], op1, v1)
-                m2 = self._build_single_mask(df[col], op2, v2)
-
-                if f.get('p_op_central').upper() == 'AND': return m1 & m2
-                if f.get('p_op_central').upper() == 'OR': return m1 | m2
-            else:
-                v1 = float(str(val1).replace(',', '.'))
-                return self._build_single_mask(df[col], op1, v1)
-
-        except:
-            return pd.Series(False, index=df.index)
-
-    def _create_conditional_mask(self, df, f, global_config):
-        mask = pd.Series(True, index=df.index)
-
-        if not f.get('c_check'):
-            return mask
-
-        col_idade = global_config.get('coluna_idade')
-        col_sexo = global_config.get('coluna_sexo')
-
-        if f.get('c_idade_check') and col_idade in df.columns:
-            df[col_idade] = self._safe_to_numeric(df[col_idade])
-
-        if f.get('c_sexo_check') and col_sexo in df.columns:
-            val = f.get('c_sexo_val', '').lower().strip()
-            if val:
-                mask &= self._build_single_mask(df[col_sexo], '==', val)
-
-        return mask
-
-    def apply_filters_duckdb(file_path, filters_config):
-
+# --- FILTER ENGINE ---
+def apply_filters_duckdb(file_path, filters_config):
     con = get_duckdb_conn()
-
     query = "SELECT * FROM read_csv_auto(?) WHERE TRUE"
-
     params = [file_path]
 
     for f in filters_config:
@@ -237,119 +157,50 @@ class DataProcessor:
         elif op == "=":
             query += f" AND {col} != {val}"
 
-    df = con.execute(query, params).df()
+    return con.execute(query, params).df()
 
-    return df
-
-    def apply_stratification(self, df, strata_config, global_config, progress_bar):
-
-        col_idade = global_config.get('coluna_idade')
-        col_sexo = global_config.get('coluna_sexo')
-
-        df[col_idade] = self._safe_to_numeric(df[col_idade])
-
-        generated = {}
-
-        for i, stratum in enumerate(strata_config.get('ages', [])):
-            mask = pd.Series(True, index=df.index)
-
-            if stratum.get('op1'):
-                val = float(str(stratum.get('val1')).replace(',', '.'))
-                op = self.OPERATOR_MAP.get(stratum['op1'], stratum['op1'])
-                mask &= eval(f"df[col_idade] {op} {val}")
-
-            result = df.loc[mask]
-
-            if not result.empty:
-                generated[f"stratum_{i}"] = result
-
-        return generated
-
-
-# --- LOAD DATAFRAME OTIMIZADO ---
-
-@st.cache_data
-file_path = save_uploaded_file(uploaded_file):
-    if uploaded_file is None:
-        return None
-
-    file_name = uploaded_file.name.lower()
-
-    try:
-        if file_name.endswith('.csv'):
-            uploaded_file.seek(0)
-            try:
-                df = pd.read_csv(
-                    uploaded_file,
-                    sep=';',
-                    decimal=',',
-                    encoding='latin-1',
-                    low_memory=True,
-                    memory_map=True
-                )
-            except:
-                uploaded_file.seek(0)
-                df = pd.read_csv(
-                    uploaded_file,
-                    sep=',',
-                    decimal='.',
-                    encoding='utf-8',
-                    low_memory=True,
-                    memory_map=True
-                )
-
-        else:
-            uploaded_file.seek(0)
-            df = pd.read_excel(uploaded_file, engine='openpyxl')
-
-        # downcast
-        for col in df.select_dtypes(include=['float']):
-            df[col] = pd.to_numeric(df[col], downcast='float')
-
-        for col in df.select_dtypes(include=['int']):
-            df[col] = pd.to_numeric(df[col], downcast='integer')
-
-        return df
-
-    except Exception as e:
-        st.error(e)
-        return None
-
-
-# --- EXPORTS ---
-
+# --- EXPORT ---
 @st.cache_data
 def to_csv(df):
     return df.to_csv(index=False, sep=';', decimal=',').encode('utf-8')
 
-
-@st.cache_data
-def to_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False)
-    return output.getvalue()
-
-
 # --- MAIN ---
-
 def main():
+
+    # Sidebar Manual
+    with st.sidebar:
+        st.title("User Manual")
+        topic = st.selectbox("Select topic", list(MANUAL_CONTENT.keys()))
+        st.markdown(MANUAL_CONTENT[topic])
+
+    if 'accepted' not in st.session_state:
+        st.session_state.accepted = False
+
+    if not st.session_state.accepted:
+        st.title("Data Sift")
+        st.markdown(GDPR_TERMS)
+        if st.button("Accept"):
+            st.session_state.accepted = True
+            st.rerun()
+        return
+
     st.title("Data Sift")
 
-    uploaded_file = st.file_uploader("Upload", type=['csv', 'xlsx'])
+    uploaded_file = st.file_uploader("Upload CSV", type=['csv'])
 
-    df = load_dataframe(uploaded_file)
-
-    if df is not None:
+    if uploaded_file is not None:
+        file_path = save_uploaded_file(uploaded_file)
 
         if st.button("Process"):
-
-            processor = get_data_processor()
-
-            progress = st.progress(0)
-
             result = apply_filters_duckdb(file_path, DEFAULT_FILTERS)
 
+            st.success(f"{len(result)} rows remaining")
+
+            st.download_button(
+                "Download CSV",
+                to_csv(result),
+                "resultado.csv"
+            )
 
 if __name__ == "__main__":
     main()
