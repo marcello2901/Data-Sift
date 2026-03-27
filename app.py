@@ -258,7 +258,7 @@ class DataProcessor:
         try:
             progress_bar.progress(0.8, text="Executando Motor DuckDB (SQL)...")
             filtered_df = duckdb.query(query).df()
-            progress_bar.progress(1.0, text="Filtragem completa!")
+            progress_bar.progress(1.0, text="Filters applied successfully!")
             return filtered_df
         except Exception as e:
             st.error(f"Erro no processamento SQL: {e}")
