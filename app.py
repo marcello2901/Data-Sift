@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.1.1 - Atualização: Otimização de Memória (Chunking) no Motor SQL DuckDB
-# Melhorias: Processamento de dados dividido em lotes com limite dinâmico de RAM (Anti-Crash Streamlit).
-# Correção: Remoção do downcasting numérico para manter a precisão original dos dados.
+# Versão 2.2.0 - Atualização: Integração do Estudo de Harris-Boyd
+# Melhorias: Processamento de dados extremamente rápido via DuckDB para não travar o Streamlit.
+# Adicionado: Recomendador de estratificações automáticas via critério de Harris-Boyd.
 
 import streamlit as st
 import pandas as pd
@@ -52,21 +52,19 @@ MANUAL_CONTENT = {
 This program is a spreadsheet filter tool designed to optimize your work with large volumes of data by offering two main functionalities:
 
 1.  **Filtering:** To clean your database by removing rows that are not of interest.
-2.  **Stratification:** To divide your database into specific subgroups.
-
-Navigate through the topics in the menu above to learn how to use each part of the tool.""",
+2.  **Stratification:** To divide your database into specific subgroups.""",
     "1. Global Settings": """**1. Global Settings**
 
 This section contains the essential settings that are shared between both tools.
 
 - **Select Spreadsheet:**
-  Opens a window to select the source data file. It supports `.xlsx`, `.xls`, and `.csv` formats. Once selected, the file becomes available for both tools.
+  Opens a window to select the source data file. It supports `.xlsx`, `.xls`, and `.csv` formats.
 
-- **Age Column / Sex/Gender:**
-  Fields to **select** the column name in your spreadsheet. The options in the list appear after the file is uploaded.
+- **Age Column / Sex/Gender / Data Column:**
+  Fields to **select** the column names in your spreadsheet. The **Data Column** is specifically used to automatically run the Harris-Boyd stratification study.
 
 - **Output Format:**
-  A selection menu to choose the format of the generated files. The default is `.csv`. Choose `Excel (.xlsx)` for better compatibility with Microsoft Excel or `CSV (.csv)` for a lighter, universal format.
+  A selection menu to choose the format of the generated files. Choose `Excel (.xlsx)` for Microsoft Excel or `CSV (.csv)` for a lighter format.
   """,
     "2. Filter Tool": """**2. Filter Tool**
 
@@ -77,37 +75,29 @@ Each row you add is a condition to **remove** data. If a row in your spreadsheet
 
 - **[✓] (Activation Checkbox):** Toggles a rule on or off without deleting it.
 
-- **Column:** The name of the column where the filter will be applied. **Tip:** You can apply the rule to multiple columns at once by separating their names with a semicolon (;). When doing so, a row will be excluded only if **all** specified columns meet the condition.
+- **Column:** The name of the column where the filter will be applied. **Tip:** You can apply the rule to multiple columns at once by separating their names with a semicolon (;).
 
-- **Operator and Value:** Operators ">", "<", "≥", "≤", "=", "Not equal to" define the rule's logic. They are used to define the ranges that will be considered for data **exclusion**.
+- **Operator and Value:** Operators define the rule's logic to set exclusion ranges.
 **Tip:** The keyword `empty` is a powerful feature:
-    - **Scenario 1: Exclude rows with MISSING data.**
-        - **Configuration:** Column: `"Exam_X"`, Operator: `"is equal to"`, Value: `"empty"`.
-    - **Scenario 2: Keep only rows with EXISTING data.**
-        - **Configuration:** Column: `"Observations"`, Operator: `"Not equal to"`, Value: `"empty"`.
+    - **Scenario 1:** Column: `"Exam_X"`, Operator: `"is equal to"`, Value: `"empty"`.
+    - **Scenario 2:** Column: `"Observations"`, Operator: `"Not equal to"`, Value: `"empty"`.
 
-- **Compound Logic:** Expands the rule to create `AND` / `OR` conditions for when the user wants to set exclusion ranges.
+- **Compound Logic:** Expands the rule to create `AND` / `OR` conditions.
 
-- **Condition:** Allows applying a secondary filter. The main rule will only be applied to rows that also meet the specified sex and/or age conditions.
+- **Condition:** Allows applying a secondary filter based on sex and/or age conditions.
 
-- **Actions:** The `X` button deletes the rule. The 'Clone' button duplicates it.
-
-- **Generate Filtered Sheet:** Starts the process. A download button will appear at the end with the `Filtered_Sheet_` file with a timestamp.""",
+- **Actions:** The `X` button deletes the rule. The 'Clone' button duplicates it.""",
     "3. Stratification Tool": """**3. Stratification Tool**
 
-Unlike the filter, the purpose of this tool is to **split** your spreadsheet into **multiple smaller files**, where each file represents a subgroup of interest (a "stratum").
+This tool splits your spreadsheet into **multiple smaller files**, where each file represents a subgroup of interest.
+
+**Harris-Boyd Study:**
+Automatically evaluates the selected Data Column and Age Column to suggest the most statistically relevant age cuts based on the Harris-Boyd criteria (CLSI EP28-A3c).
 
 **How Stratification Works:**
-
-- **Stratification Options by Sex/Gender:**
-  - After loading a spreadsheet and selecting the "Sex/Gender" column in the Global Settings, this area will display a checkbox for each unique value found (e.g., Male, Female, etc.). Check the ones you want to include in the stratification.
-
-- **Age Range Definitions:**
-  - This area is used **exclusively** to create age-based strata.
-
-- **Generate Stratified Sheets:**
-  - Starts the splitting process. The number of generated files will be (`number of age ranges` x `number of selected genders`).
-  - **Confirmation:** Before starting, the program will ask if you are using an already filtered spreadsheet."""
+- **Stratification Options by Sex/Gender:** Select the genders you want to include.
+- **Age Range Definitions:** Create the specific age boundaries.
+- **Generate Stratified Sheets:** Starts the splitting process."""
 }
 
 DEFAULT_FILTERS = [
@@ -158,7 +148,7 @@ class DataProcessor:
             if op == '!=': return f"({col} IS NOT NULL AND TRIM(CAST({col} AS VARCHAR)) != '')"
             return "FALSE"
 
-        # Tenta interpretar como número (permite comparar strings que na verdade são números na planilha)
+        # Tenta interpretar como número
         try:
             v_num = float(str(val).replace(',', '.'))
             safe_cast = f"TRY_CAST(REPLACE(CAST({col} AS VARCHAR), ',', '.') AS DOUBLE)"
@@ -217,7 +207,7 @@ class DataProcessor:
         return " AND ".join(conds) if conds else "TRUE"
 
     def apply_filters(self, df: pd.DataFrame, filters_config: List[Dict], global_config: Dict, progress_bar) -> pd.DataFrame:
-        """Executa a lógica de Exclusão usando o DuckDB para alta performance com processamento em Chunks."""
+        """Executa a lógica de Exclusão usando o DuckDB para alta performance."""
         active_filters = [f for f in filters_config if f['p_check']]
         
         if not active_filters:
@@ -244,7 +234,6 @@ class DataProcessor:
             combined_main_sql = " AND ".join([f"({c})" for c in main_conds]) if main_conds else "FALSE"
             cond_sql = self._create_conditional_sql(f_config, global_config)
 
-            # Lógica de exclusão: se a linha satisfaz a regra principal E a condicional, ela deve ser excluída.
             rule_sql = f"({combined_main_sql}) AND ({cond_sql})"
             exclusion_clauses.append(f"NOT ({rule_sql})")
 
@@ -253,36 +242,11 @@ class DataProcessor:
             return df
 
         where_clause = " AND ".join(exclusion_clauses)
-        query = f"SELECT * FROM df_virtual WHERE {where_clause}"
+        query = f"SELECT * FROM df WHERE {where_clause}"
 
         try:
-            progress_bar.progress(0.8, text="Executando Motor DuckDB (Processamento em Lotes/Chunks)...")
-            
-            # Instancia conexão DuckDB otimizada para evitar OOM no Streamlit Cloud
-            con = duckdb.connect()
-            temp_dir = tempfile.gettempdir()
-            # Garante limite estrito e fallback no disco caso arquivo seja gigantesco
-            con.execute(f"PRAGMA temp_directory='{temp_dir}'")
-            con.execute("PRAGMA memory_limit='512MB'")
-            con.register('df_virtual', df)
-            
-            cursor = con.execute(query)
-            
-            chunks = []
-            while True:
-                # Extrai uma fração segura da consulta para não estourar a memória RAM de uma vez
-                chunk = cursor.fetch_df_chunk()
-                if chunk.empty:
-                    break
-                chunks.append(chunk)
-                
-            if chunks:
-                filtered_df = pd.concat(chunks, ignore_index=True)
-            else:
-                filtered_df = pd.DataFrame(columns=df.columns)
-                
-            con.close()
-            
+            progress_bar.progress(0.8, text="Executando Motor DuckDB (SQL)...")
+            filtered_df = duckdb.query(query).df()
             progress_bar.progress(1.0, text="Filtering complete!")
             return filtered_df
         except Exception as e:
@@ -290,7 +254,7 @@ class DataProcessor:
             return df
     
     def apply_stratification(self, df: pd.DataFrame, strata_config: Dict, global_config: Dict, progress_bar) -> Dict[str, pd.DataFrame]:
-        """Divide o banco em sub-planilhas usando processamento de chunks DuckDB."""
+        """Divide o banco em sub-planilhas usando DuckDB."""
         col_idade = global_config.get('coluna_idade')
         col_sexo = global_config.get('coluna_sexo')
 
@@ -334,30 +298,15 @@ class DataProcessor:
                 conditions.append(self._build_single_sql_cond(safe_sexo, '=', sex_rule['value']))
 
             where_clause = " AND ".join([f"({c})" for c in conditions]) if conditions else "TRUE"
-            query = f"SELECT * FROM df_virtual WHERE {where_clause}"
+            query = f"SELECT * FROM df WHERE {where_clause}"
 
             filename = self._generate_stratum_name(age_rule, sex_rule)
             progress_bar.progress(progress, text=f"Gerando estrato {i+1}/{total_files}: {filename}...")
             
             try:
-                con = duckdb.connect()
-                temp_dir = tempfile.gettempdir()
-                con.execute(f"PRAGMA temp_directory='{temp_dir}'")
-                con.execute("PRAGMA memory_limit='512MB'")
-                con.register('df_virtual', df)
-                
-                cursor = con.execute(query)
-                chunks = []
-                while True:
-                    chunk = cursor.fetch_df_chunk()
-                    if chunk.empty:
-                        break
-                    chunks.append(chunk)
-                
-                if chunks:
-                    stratum_df = pd.concat(chunks, ignore_index=True)
+                stratum_df = duckdb.query(query).df()
+                if not stratum_df.empty:
                     generated_dfs[filename] = stratum_df
-                con.close()
             except Exception as e:
                 st.warning(f"Não foi possível gerar o estrato {filename} devido a erro nos valores: {e}")
 
@@ -413,7 +362,6 @@ def load_dataframe(uploaded_file):
     try:
         file_name = uploaded_file.name.lower()
         
-        # 1. STREAMING PARA O DISCO: Evita clonar o arquivo gigante na memória RAM
         uploaded_file.seek(0)
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
             shutil.copyfileobj(uploaded_file, tmp_file)
@@ -421,7 +369,6 @@ def load_dataframe(uploaded_file):
 
         df = None
 
-        # --- LÓGICA DE TRATAMENTO DE ZIP ---
         if file_name.endswith('.zip'):
             with zipfile.ZipFile(tmp_path) as z:
                 valid_files = [f for f in z.namelist() if not f.startswith('__MACOSX/') and 
@@ -432,7 +379,6 @@ def load_dataframe(uploaded_file):
                     os.remove(tmp_path)
                     return None
                 
-                # Extrai o arquivo para o disco temporário
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(valid_files[0])[1]) as inner_tmp:
                     inner_tmp.write(z.read(valid_files[0]))
                     inner_path = inner_tmp.name
@@ -441,7 +387,6 @@ def load_dataframe(uploaded_file):
                 
                 if inner_filename.endswith('.csv'):
                     try:
-                        # 2. MOTOR PYARROW: Leitura super rápida com metade do custo de memória
                         df = pd.read_csv(inner_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
                     except Exception:
                         df = pd.read_csv(inner_path, sep=',', decimal='.', encoding='utf-8', engine='pyarrow')
@@ -450,7 +395,6 @@ def load_dataframe(uploaded_file):
                 
                 os.remove(inner_path)
 
-        # --- LÓGICA PARA ARQUIVOS DIRETOS ---
         elif file_name.endswith('.csv'):
             try: 
                 df = pd.read_csv(tmp_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
@@ -459,20 +403,91 @@ def load_dataframe(uploaded_file):
         else:
             df = pd.read_excel(tmp_path, engine='openpyxl')
 
-        # Limpa o arquivo temporário do disco para liberar espaço
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-        # Apenas otimiza colunas de texto (preserva todos os números intactos)
         if df is not None:
-            for col in df.select_dtypes('object').columns:
-                if df[col].nunique() / len(df[col]) < 0.5:
-                    df[col] = df[col].astype('category')
+            for col in df.select_dtypes(include=['object']).columns:
+                mask = df[col].notna()
+                df.loc[mask, col] = df.loc[mask, col].astype(str)
+                
+                try:
+                    if df[col].nunique() / len(df[col]) < 0.5:
+                        df[col] = df[col].astype('category')
+                except Exception:
+                    pass 
         
         return df
     except Exception as e:
         st.error(f"Erro ao ler o arquivo: {e}")
         return None
+
+@st.cache_data(show_spinner=False)
+def run_harris_boyd(df, col_idade, col_dados):
+    """Executa a análise estatística de Harris-Boyd sugerindo cortes."""
+    temp_df = pd.DataFrame()
+    temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
+    
+    def clean_val(x):
+        if pd.isna(x): return np.nan
+        x = str(x).replace(',', '.')
+        x = ''.join(c for c in x if c.isdigit() or c == '.' or c == '-')
+        try: return float(x)
+        except: return np.nan
+        
+    temp_df['Data'] = df[col_dados].apply(clean_val)
+    temp_df = temp_df.dropna(subset=['Idade', 'Data'])
+    temp_df = temp_df[temp_df['Idade'] >= 0]
+    
+    if temp_df.empty:
+        return pd.DataFrame()
+        
+    max_age = int(temp_df['Idade'].max())
+    if max_age < 1:
+        return pd.DataFrame()
+        
+    results = []
+    for age_cutoff in range(1, max_age):
+        g1 = temp_df[temp_df['Idade'] <= age_cutoff]['Data']
+        g2 = temp_df[temp_df['Idade'] > age_cutoff]['Data']
+        
+        n1, n2 = len(g1), len(g2)
+        if n1 < 30 or n2 < 30:
+            continue
+            
+        mean1, mean2 = np.mean(g1), np.mean(g2)
+        var1, var2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
+        sd1, sd2 = np.sqrt(var1), np.sqrt(var2)
+        
+        sd_ratio = max(sd1, sd2) / min(sd1, sd2) if min(sd1, sd2) > 0 else 0
+        
+        den_z = np.sqrt((var1/n1) + (var2/n2)) if (var1/n1) + (var2/n2) > 0 else 0.0001
+        z = abs(mean1 - mean2) / den_z
+        z_crit = 3 * np.sqrt((n1+n2)/120) if (n1+n2) < 120 else 3
+        
+        den_d = np.sqrt((var1 + var2) / 2) if (var1 + var2) > 0 else 0.0001
+        d_value = abs(mean1 - mean2) / den_d
+        
+        partition_by_sd = sd_ratio > 1.5
+        partition_by_mean = (z > z_crit) and (d_value > 0.25)
+        should_partition = partition_by_sd or partition_by_mean
+        
+        if should_partition:
+            results.append({
+                'Corte de Idade': f"<= {age_cutoff} vs > {age_cutoff}",
+                'Justificativa': 'Desvio Padrão' if partition_by_sd and not partition_by_mean else ('Média' if partition_by_mean and not partition_by_sd else 'Ambos'),
+                'D-value': round(d_value, 3),
+                'Razão DP': round(sd_ratio, 3),
+                'Média (<= Corte)': round(mean1, 2),
+                'Média (> Corte)': round(mean2, 2),
+                'N1': n1,
+                'N2': n2
+            })
+    
+    res_df = pd.DataFrame(results)
+    if not res_df.empty:
+        res_df = res_df.sort_values(by=['D-value', 'Razão DP'], ascending=False).head(10)
+    return res_df
 
 @st.cache_data(show_spinner="Preparando arquivo para exportação...")
 def to_excel(df):
@@ -660,28 +675,27 @@ def main():
             key="file_uploader_widget"
         )
 
-        # --- NOVA LÓGICA DE MEMÓRIA (Evita lentidão ao clicar nos filtros) ---
         if "dados_salvos" not in st.session_state:
             st.session_state.dados_salvos = None
         if "id_arquivo_atual" not in st.session_state:
             st.session_state.id_arquivo_atual = None
 
         if uploaded_file is not None:
-            # Só aciona a leitura se for um arquivo realmente novo
             if st.session_state.id_arquivo_atual != uploaded_file.file_id:
                 st.session_state.dados_salvos = load_dataframe(uploaded_file)
                 st.session_state.id_arquivo_atual = uploaded_file.file_id
         else:
-            # Limpa a memória se o usuário fechar o arquivo
             st.session_state.dados_salvos = None
             st.session_state.id_arquivo_atual = None
 
         df = st.session_state.dados_salvos
         column_options = df.columns.tolist() if df is not None else []
-        c1, c2, c3 = st.columns(3)
-        with c1: st.selectbox("Age Column", options=column_options, key="col_idade", index=None, placeholder="Select the Age column")
-        with c2: st.selectbox("Sex/Gender Column", options=column_options, key="col_sexo", index=None, placeholder="Select the Sex/Gender column")
-        with c3: st.selectbox("Output Format", ["CSV (.csv)", "Excel (.xlsx)"], key="output_format")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.selectbox("Age Column", options=column_options, key="col_idade", index=None, placeholder="Select Age column")
+        with c2: st.selectbox("Sex/Gender Column", options=column_options, key="col_sexo", index=None, placeholder="Select Sex/Gender")
+        with c3: st.selectbox("Data Column (Harris-Boyd)", options=column_options, key="col_dados", index=None, placeholder="Select Data Column")
+        with c4: st.selectbox("Output Format", ["CSV (.csv)", "Excel (.xlsx)"], key="output_format")
 
         st.session_state.sex_column_is_valid = True
         st.session_state.age_column_is_valid = True
@@ -735,6 +749,23 @@ def main():
             st.download_button("Download Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True)
 
     with tab_stratify:
+        st.header("Estudo de Harris-Boyd (Sugestão de Estratificação)")
+        if df is not None:
+            if not st.session_state.col_idade or not st.session_state.col_dados:
+                st.info("⚠️ Para visualizar o estudo de Harris-Boyd, certifique-se de preencher a **'Age Column'** e a **'Data Column (Harris-Boyd)'** na seção de **Global Settings**.")
+            else:
+                with st.spinner("Calculando o modelo de Harris-Boyd..."):
+                    hb_results = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
+                    if hb_results.empty:
+                        st.success("O modelo estatístico rodou, mas não encontrou partições de idade estritamente necessárias ou não há dados suficientes para esta coluna.")
+                    else:
+                        st.write("Top cortes recomendados pelo modelo (ordenados por relevância e distanciamento):")
+                        st.dataframe(hb_results, use_container_width=True, hide_index=True)
+        else:
+            st.info("⚠️ Faça o upload de uma planilha em 'Global Settings' para utilizar esta função.")
+        
+        st.markdown("---")
+
         st.header("Stratification Options")
         if st.session_state.sex_column_is_valid and sex_column_values:
             if 'strat_gender_selection' not in st.session_state: st.session_state.strat_gender_selection = {val: True for val in sex_column_values if val}
