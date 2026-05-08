@@ -486,12 +486,15 @@ def run_harris_boyd(df, col_idade, col_dados):
     if not valid_cuts:
          return "O modelo estatístico não encontrou necessidade clínica ou variância suficiente para recomendar quebras de referência por idade para este analito.", pd.DataFrame()
 
+    # Ordena os cortes por idade para facilitar a lógica a seguir e a exibição
+    valid_cuts = sorted(valid_cuts, key=lambda x: x['age'])
+
     # Lógica de Agrupamento (Clustering)
     clusters = []
     current_cluster = []
     
     # Agrupa idades caso tenham uma distância de até 3 anos umas das outras
-    for cut in sorted(valid_cuts, key=lambda x: x['age']):
+    for cut in valid_cuts:
         if not current_cluster:
             current_cluster.append(cut)
         elif cut['age'] - current_cluster[-1]['age'] <= 3: 
@@ -508,9 +511,9 @@ def run_harris_boyd(df, col_idade, col_dados):
         best = max(cluster, key=lambda x: x['d_value'])
         best_cuts.append(best)
 
-    # Construção do Laudo Interpretativo para o Analista
     best_cuts = sorted(best_cuts, key=lambda x: x['age'])
     
+    # Construção do Laudo Interpretativo para o Analista
     texto_laudo = "### 💡 Sugestão Prática de Estratificação\n"
     texto_laudo += "O algoritmo analisou as médias e a dispersão dos dados e detectou **"
     texto_laudo += "1 ponto**" if len(best_cuts) == 1 else f"{len(best_cuts)} pontos**"
@@ -542,9 +545,24 @@ def run_harris_boyd(df, col_idade, col_dados):
     texto_laudo += f"**{len(best_cuts)+1}. Grupo de {last_age + 1} anos em diante (Média aprox: {best_cuts[-1]['mean2']:.1f})**\n"
     texto_laudo += "🔹 A partir desta barreira, o modelo considera que os resultados tendem a se estabilizar estatisticamente, compondo a faixa de referência principal para os laudos.\n"
 
-    # Converte tudo para DF bruto para exibir no modo avançado
-    raw_df = pd.DataFrame([{k: v for k, v in cut.items() if k not in ['age', 'justificativa', 'd_value', 'sd_ratio', 'mean1', 'mean2', 'n1', 'n2']} for cut in valid_cuts])
-    raw_df = raw_df.sort_values(by=['D-value', 'Razão DP'], ascending=False).head(10)
+    # Montagem da tabela completa (Sem limite de linhas e ordenada cronologicamente)
+    idades_sugeridas = [c['age'] for c in best_cuts]
+    raw_data_list = []
+    
+    for cut in valid_cuts:
+        raw_data_list.append({
+            'Recomendação': '⭐ Sugerido' if cut['age'] in idades_sugeridas else '',
+            'Corte de Idade': cut['Corte de Idade'],
+            'Justificativa': cut['Justificativa'],
+            'D-value': cut['D-value'],
+            'Razão DP': cut['Razão DP'],
+            'Média (<= Corte)': cut['Média (<= Corte)'],
+            'Média (> Corte)': cut['Média (> Corte)'],
+            'N (<= Corte)': cut['n1'],
+            'N (> Corte)': cut['n2']
+        })
+
+    raw_df = pd.DataFrame(raw_data_list)
     
     return texto_laudo, raw_df
 
