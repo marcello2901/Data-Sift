@@ -5,3 +5,4 @@ openpyxl==3.1.2
 duckdb==0.10.2
 pyarrow==15.0.2
 matplotlib
+seaborn
