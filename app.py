@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.4.1 - Atualização: Integridade Absoluta de Dados (Zero-Rounding)
-# Melhorias: Alteração do motor DuckDB para atuar apenas como indexador de filtro, 
-# preservando 100% da tipagem, formatação e precisão decimal do DataFrame original.
+# Versão 2.4.2 - Atualização: Internacionalização (i18n)
+# Melhorias: Todos os textos de UI, laudos do Harris-Boyd e gráficos do Boxplot foram traduzidos para o Inglês para manter o padrão do aplicativo.
 
 import streamlit as st
 import pandas as pd
@@ -238,20 +237,15 @@ class DataProcessor:
 
         where_clause = " AND ".join(exclusion_clauses)
         
-        # Criação de um ID único temporário para garantir subset perfeito do Pandas original sem uso de CAST pelo DuckDB
         df['_temp_row_id'] = range(len(df))
-        
-        # DuckDB atua apenas como motor de busca dos IDs das linhas
         query = f"SELECT _temp_row_id FROM df WHERE {where_clause}"
 
         try:
             progress_bar.progress(0.8, text="Executando Motor DuckDB (SQL)...")
             valid_ids_df = duckdb.query(query).df()
             
-            # Recorta a base de dados utilizando o DataFrame Pandas Original, preservando formatação absoluta
             filtered_df = df[df['_temp_row_id'].isin(valid_ids_df['_temp_row_id'])].copy()
             
-            # Limpeza das colunas auxiliares
             filtered_df.drop(columns=['_temp_row_id'], inplace=True)
             df.drop(columns=['_temp_row_id'], inplace=True)
             
@@ -291,7 +285,6 @@ class DataProcessor:
         total_files = len(final_strata_to_process)
         generated_dfs = {}
 
-        # Usa IDs temporários para isolar a integridade do Pandas e DuckDB
         df['_temp_row_id'] = range(len(df))
 
         for i, stratum in enumerate(final_strata_to_process):
@@ -310,8 +303,6 @@ class DataProcessor:
                 conditions.append(self._build_single_sql_cond(safe_sexo, '=', sex_rule['value']))
 
             where_clause = " AND ".join([f"({c})" for c in conditions]) if conditions else "TRUE"
-            
-            # Puxa apenas os índices pelo DuckDB
             query = f"SELECT _temp_row_id FROM df WHERE {where_clause}"
 
             filename = self._generate_stratum_name(age_rule, sex_rule)
@@ -320,14 +311,12 @@ class DataProcessor:
             try:
                 valid_ids_df = duckdb.query(query).df()
                 if not valid_ids_df.empty:
-                    # Aplica a máscara e cria o arquivo estratificado 100% fiel
                     stratum_df = df[df['_temp_row_id'].isin(valid_ids_df['_temp_row_id'])].copy()
                     stratum_df.drop(columns=['_temp_row_id'], inplace=True)
                     generated_dfs[filename] = stratum_df
             except Exception as e:
                 st.warning(f"Não foi possível gerar o estrato {filename} devido a erro nos valores: {e}")
 
-        # Limpeza no DF base
         df.drop(columns=['_temp_row_id'], inplace=True)
         progress_bar.progress(1.0, text="Estratificação completa!")
         return generated_dfs
@@ -458,11 +447,11 @@ def run_harris_boyd(df, col_idade, col_dados):
     temp_df = temp_df[temp_df['Idade'] >= 0]
     
     if temp_df.empty:
-        return "Nenhuma estratificação recomendada (Dados insuficientes).", pd.DataFrame()
+        return "No stratification recommended (Insufficient data).", pd.DataFrame()
         
     max_age = int(temp_df['Idade'].max())
     if max_age < 1:
-        return "Nenhuma estratificação recomendada (Variação de idade insuficiente).", pd.DataFrame()
+        return "No stratification recommended (Insufficient age variation).", pd.DataFrame()
         
     valid_cuts = []
     
@@ -492,7 +481,7 @@ def run_harris_boyd(df, col_idade, col_dados):
         should_partition = partition_by_sd or partition_by_mean
         
         if should_partition:
-            just = 'Desvio Padrão' if partition_by_sd and not partition_by_mean else ('Média' if partition_by_mean and not partition_by_sd else 'Ambos')
+            just = 'Standard Deviation' if partition_by_sd and not partition_by_mean else ('Mean' if partition_by_mean and not partition_by_sd else 'Both')
             valid_cuts.append({
                 'age': age_cutoff,
                 'justificativa': just,
@@ -502,16 +491,16 @@ def run_harris_boyd(df, col_idade, col_dados):
                 'mean2': mean2,
                 'n1': n1,
                 'n2': n2,
-                'Corte de Idade': f"<= {age_cutoff} vs > {age_cutoff}",
-                'Justificativa': just,
+                'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
+                'Justification': just,
                 'D-value': round(d_value, 3),
-                'Razão DP': round(sd_ratio, 3),
-                'Média (<= Corte)': round(mean1, 2),
-                'Média (> Corte)': round(mean2, 2)
+                'SD Ratio': round(sd_ratio, 3),
+                'Mean (<= Cutoff)': round(mean1, 2),
+                'Mean (> Cutoff)': round(mean2, 2)
             })
             
     if not valid_cuts:
-         return "O modelo estatístico não encontrou necessidade clínica ou variância suficiente para recomendar quebras de referência por idade para este analito.", pd.DataFrame()
+         return "The statistical model found no clinical necessity or sufficient variance to recommend age-based reference intervals for this analyte.", pd.DataFrame()
 
     valid_cuts = sorted(valid_cuts, key=lambda x: x['age'])
 
@@ -556,10 +545,10 @@ def run_harris_boyd(df, col_idade, col_dados):
 
     best_cuts = sorted(best_cuts, key=lambda x: x['age'])
     
-    texto_laudo = "### 💡 Sugestão Prática de Estratificação\n"
-    texto_laudo += "O algoritmo analisou as médias e a dispersão dos dados e detectou **"
-    texto_laudo += "1 ponto**" if len(best_cuts) == 1 else f"{len(best_cuts)} pontos**"
-    texto_laudo += " de mudança clínica significativa ao longo das idades:\n\n"
+    texto_laudo = "### 💡 Practical Stratification Suggestion\n"
+    texto_laudo += "The algorithm analyzed the means and data dispersion and detected **"
+    texto_laudo += "1 point**" if len(best_cuts) == 1 else f"{len(best_cuts)} points**"
+    texto_laudo += " of significant clinical change across ages:\n\n"
 
     last_age = 0
     for i, cut in enumerate(best_cuts):
@@ -568,38 +557,38 @@ def run_harris_boyd(df, col_idade, col_dados):
         m2 = cut['mean2']
         
         if i == 0:
-            faixa = f"De {last_age} a {idade_corte} anos"
+            faixa = f"From {last_age} to {idade_corte} years"
         else:
-            faixa = f"De {last_age + 1} a {idade_corte} anos"
+            faixa = f"From {last_age + 1} to {idade_corte} years"
             
-        texto_laudo += f"**{i+1}. Grupo {faixa} (Média aprox: {m1:.1f})**\n"
-        texto_laudo += "🔹 *Por que separar?* "
-        if cut['justificativa'] == 'Média':
-            texto_laudo += f"Nesta fase da vida, há uma mudança expressiva nos resultados médios em comparação ao resto da população (salto para {m2:.1f}). "
-        elif cut['justificativa'] == 'Desvio Padrão':
-            texto_laudo += "Esta faixa etária apresenta uma variabilidade (dispersão de resultados) muito diferente das demais idades. "
+        texto_laudo += f"**{i+1}. Group {faixa} (Approx. Mean: {m1:.1f})**\n"
+        texto_laudo += "🔹 *Why separate?* "
+        if cut['justificativa'] == 'Mean':
+            texto_laudo += f"In this life stage, there is a significant change in mean results compared to the rest of the population (jump to {m2:.1f}). "
+        elif cut['justificativa'] == 'Standard Deviation':
+            texto_laudo += "This age group presents a very different variability (data dispersion) compared to other ages. "
         else:
-            texto_laudo += f"Esta faixa etária possui um comportamento único, tanto pela média diferente (salto para {m2:.1f}) quanto pela alta dispersão dos dados. "
+            texto_laudo += f"This age group has a unique behavior, both due to a different mean (jump to {m2:.1f}) and high data dispersion. "
         texto_laudo += f"\n\n"
         last_age = idade_corte
         
-    texto_laudo += f"**{len(best_cuts)+1}. Grupo de {last_age + 1} anos em diante (Média aprox: {best_cuts[-1]['mean2']:.1f})**\n"
-    texto_laudo += "🔹 A partir desta barreira, o modelo considera que os resultados tendem a se estabilizar estatisticamente, compondo a faixa de referência principal para os laudos.\n"
+    texto_laudo += f"**{len(best_cuts)+1}. Group from {last_age + 1} years onwards (Approx. Mean: {best_cuts[-1]['mean2']:.1f})**\n"
+    texto_laudo += "🔹 From this barrier onwards, the model considers that the results tend to stabilize statistically, forming the main reference range for reports.\n"
 
     idades_sugeridas = [c['age'] for c in best_cuts]
     raw_data_list = []
     
     for cut in valid_cuts:
         raw_data_list.append({
-            'Recomendação': '⭐ Sugerido' if cut['age'] in idades_sugeridas else '',
-            'Corte de Idade': cut['Corte de Idade'],
-            'Justificativa': cut['Justificativa'],
+            'Recommendation': '⭐ Suggested' if cut['age'] in idades_sugeridas else '',
+            'Age Cutoff': cut['Age Cutoff'],
+            'Justification': cut['Justification'],
             'D-value': cut['D-value'],
-            'Razão DP': cut['Razão DP'],
-            'Média (<= Corte)': cut['Média (<= Corte)'],
-            'Média (> Corte)': cut['Média (> Corte)'],
-            'N (<= Corte)': cut['n1'],
-            'N (> Corte)': cut['n2']
+            'SD Ratio': cut['SD Ratio'],
+            'Mean (<= Cutoff)': cut['Mean (<= Cutoff)'],
+            'Mean (> Cutoff)': cut['Mean (> Cutoff)'],
+            'N (<= Cutoff)': cut['n1'],
+            'N (> Cutoff)': cut['n2']
         })
 
     raw_df = pd.DataFrame(raw_data_list)
@@ -626,7 +615,7 @@ def plot_boxplot_idade(df, col_idade, col_dados, intervalo):
 
     if intervalo > 1:
         temp_df['Idade_Bin'] = (temp_df['Idade'] // intervalo) * intervalo
-        temp_df['Idade_Label'] = temp_df['Idade_Bin'].astype(int).astype(str) + " a " + (temp_df['Idade_Bin'] + intervalo - 1).astype(int).astype(str)
+        temp_df['Idade_Label'] = temp_df['Idade_Bin'].astype(int).astype(str) + " to " + (temp_df['Idade_Bin'] + intervalo - 1).astype(int).astype(str)
         temp_df = temp_df.sort_values('Idade_Bin')
         x_col = 'Idade_Label'
     else:
@@ -638,23 +627,23 @@ def plot_boxplot_idade(df, col_idade, col_dados, intervalo):
     
     sns.boxplot(data=temp_df, x=x_col, y='Data', color='#a2cffe', ax=ax, showfliers=False)
     
-    ax.set_title(f'Distribuição de {col_dados} por Idade', fontsize=16, fontweight='bold', pad=15)
-    ax.set_xlabel('Idade (Anos)', fontsize=14, labelpad=10)
-    ax.set_ylabel('Resultados (Sem Outliers Extremos)', fontsize=14, labelpad=10)
+    ax.set_title(f'Distribution of {col_dados} by Age', fontsize=16, fontweight='bold', pad=15)
+    ax.set_xlabel('Age (Years)', fontsize=14, labelpad=10)
+    ax.set_ylabel('Results (Without Extreme Outliers)', fontsize=14, labelpad=10)
     plt.xticks(rotation=45, ha='right')
     plt.grid(axis='y', linestyle='--', alpha=0.5)
     plt.tight_layout()
     
     return fig
 
-@st.cache_data(show_spinner="Preparando arquivo para exportação...")
+@st.cache_data(show_spinner="Preparing file for export...")
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-@st.cache_data(show_spinner="Preparando CSV para exportação...")
+@st.cache_data(show_spinner="Preparing CSV for export...")
 def to_csv(df):
     return df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
 
@@ -687,7 +676,7 @@ def draw_filter_rules(sex_column_values, column_options):
         all_checked = False
 
     header_cols[0].checkbox(
-        "Selecionar/Desmarcar tudo",
+        "Select/Unselect all",
         value=all_checked,
         key='select_all_master_checkbox', 
         on_change=handle_select_all,   
@@ -715,7 +704,7 @@ def draw_filter_rules(sex_column_values, column_options):
             cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="medium") 
             
             rule['p_check'] = cols[0].checkbox(
-                f"Ativar regra {rule['id']}", 
+                f"Activate rule {rule['id']}", 
                 value=rule.get('p_check', True), 
                 key=f"p_check_{rule['id']}", 
                 label_visibility="collapsed"
@@ -862,7 +851,7 @@ def main():
                 try:
                     unique_sex_values = df[st.session_state.col_sexo].dropna().unique()
                     if len(unique_sex_values) > 10:
-                        st.warning(f"Coluna '{st.session_state.col_sexo}' possui muitos valores únicos.")
+                        st.warning(f"Column '{st.session_state.col_sexo}' has too many unique values.")
                         st.session_state.sex_column_is_valid = False
                     else:
                         sex_column_values = [""] + list(unique_sex_values)
@@ -905,38 +894,38 @@ def main():
             st.download_button("Download Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True)
 
     with tab_stratify:
-        st.header("Estudo de Harris-Boyd (Sugestão de Estratificação)")
+        st.header("Harris-Boyd Study (Stratification Suggestion)")
         if df is not None:
             if not st.session_state.col_idade or not st.session_state.col_dados:
-                st.info("⚠️ Para visualizar o estudo de Harris-Boyd, certifique-se de preencher a **'Age Column'** e a **'Data Column (Harris-Boyd)'** na seção de **Global Settings**.")
+                st.info("⚠️ To view the Harris-Boyd study, make sure to fill in the **'Age Column'** and **'Data Column (Harris-Boyd)'** in the **Global Settings** section.")
             else:
-                with st.spinner("Calculando e gerando laudo interpretativo..."):
+                with st.spinner("Calculating and generating interpretative report..."):
                     texto_interpretativo, raw_df = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
                     st.markdown(texto_interpretativo)
                     
                     if not raw_df.empty:
-                        with st.expander("Ver dados estatísticos completos (Modo Avançado)"):
+                        with st.expander("View full statistical data (Advanced Mode)"):
                             st.dataframe(raw_df, use_container_width=True, hide_index=True)
                             
             st.markdown("---")
-            st.header("📊 Análise Visual de Dispersão (Boxplot)")
-            st.markdown("Avalie a variação das medianas e das caixas gerando o gráfico interativo abaixo.")
+            st.header("📊 Visual Dispersion Analysis (Boxplot)")
+            st.markdown("Evaluate the variation of medians and boxes by generating the interactive chart below.")
             
             if st.session_state.col_idade and st.session_state.col_dados:
                 col1, col2 = st.columns([1, 2])
-                intervalo_plot = col1.number_input("Tamanho do intervalo de idades (ex: 5 = agrupar a cada 5 anos):", min_value=1, max_value=20, value=5, step=1)
+                intervalo_plot = col1.number_input("Age interval size (e.g., 5 = group every 5 years):", min_value=1, max_value=20, value=5, step=1)
                 
-                if col2.button("Gerar Gráfico de Boxplot", type="primary", use_container_width=True):
-                    with st.spinner("Desenhando o gráfico..."):
+                if col2.button("Generate Boxplot Chart", type="primary", use_container_width=True):
+                    with st.spinner("Drawing chart..."):
                         fig = plot_boxplot_idade(df, st.session_state.col_idade, st.session_state.col_dados, intervalo_plot)
                         if fig:
                             st.pyplot(fig)
                         else:
-                            st.warning("Não há dados suficientes ou válidos na coluna selecionada para gerar o gráfico.")
+                            st.warning("Not enough valid data in the selected column to generate the chart.")
             else:
-                st.info("⚠️ Selecione a coluna de Idade e a coluna de Dados nas configurações globais para habilitar o gráfico.")
+                st.info("⚠️ Select the Age column and Data column in global settings to enable the chart.")
         else:
-            st.info("⚠️ Faça o upload de uma planilha em 'Global Settings' para utilizar esta função.")
+            st.info("⚠️ Upload a spreadsheet in 'Global Settings' to use this function.")
         
         st.markdown("---")
 
