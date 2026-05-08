@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.2.0 - Atualização: Integração do Estudo de Harris-Boyd
-# Melhorias: Processamento de dados extremamente rápido via DuckDB para não travar o Streamlit.
-# Adicionado: Recomendador de estratificações automáticas via critério de Harris-Boyd.
+# Versão 2.3.0 - Atualização: Tradutor Clínico para Harris-Boyd
+# Melhorias: Agrupamento automático de idades e geração de texto explicativo para auxiliar analistas de laboratório na definição dos Intervalos de Referência.
 
 import streamlit as st
 import pandas as pd
@@ -139,27 +138,22 @@ class DataProcessor:
     OPERATOR_MAP = {'=': '=', '==': '=', 'Não é igual a': '!=', '≥': '>=', '≤': '<=', 'is equal to': '=', 'Not equal to': '!='}
 
     def _build_single_sql_cond(self, col: str, op: str, val: Any) -> str:
-        """Gera a cláusula SQL condicional para um único valor."""
         op = self.OPERATOR_MAP.get(op, op)
 
-        # Trata o cenário de vazio ('empty')
         if str(val).lower() == 'empty':
             if op in ('=', '=='): return f"({col} IS NULL OR TRIM(CAST({col} AS VARCHAR)) = '')"
             if op == '!=': return f"({col} IS NOT NULL AND TRIM(CAST({col} AS VARCHAR)) != '')"
             return "FALSE"
 
-        # Tenta interpretar como número
         try:
             v_num = float(str(val).replace(',', '.'))
             safe_cast = f"TRY_CAST(REPLACE(CAST({col} AS VARCHAR), ',', '.') AS DOUBLE)"
             return f"({safe_cast} IS NOT NULL AND {safe_cast} {op} {v_num})"
         except ValueError:
-            # Tratamento de Strings
             v_str = str(val).replace("'", "''").lower().strip()
             return f"(CAST({col} AS VARCHAR) IS NOT NULL AND LOWER(TRIM(CAST({col} AS VARCHAR))) {op} '{v_str}')"
 
     def _create_main_sql(self, f: Dict, col: str) -> str:
-        """Cria o SQL da regra principal (com suporte a lógica expandida)."""
         op1, val1 = f.get('p_op1'), f.get('p_val1')
         safe_col = f'"{col}"'
         
@@ -184,7 +178,6 @@ class DataProcessor:
         return f"({cond1} {op_central} {cond2})"
 
     def _create_conditional_sql(self, f: Dict, global_config: Dict) -> str:
-        """Cria o SQL das condições secundárias (Idade/Sexo)."""
         if not f.get('c_check'): return "TRUE"
         conds = []
 
@@ -207,7 +200,6 @@ class DataProcessor:
         return " AND ".join(conds) if conds else "TRUE"
 
     def apply_filters(self, df: pd.DataFrame, filters_config: List[Dict], global_config: Dict, progress_bar) -> pd.DataFrame:
-        """Executa a lógica de Exclusão usando o DuckDB para alta performance."""
         active_filters = [f for f in filters_config if f['p_check']]
         
         if not active_filters:
@@ -254,7 +246,6 @@ class DataProcessor:
             return df
     
     def apply_stratification(self, df: pd.DataFrame, strata_config: Dict, global_config: Dict, progress_bar) -> Dict[str, pd.DataFrame]:
-        """Divide o banco em sub-planilhas usando DuckDB."""
         col_idade = global_config.get('coluna_idade')
         col_sexo = global_config.get('coluna_sexo')
 
@@ -424,32 +415,30 @@ def load_dataframe(uploaded_file):
 
 @st.cache_data(show_spinner=False)
 def run_harris_boyd(df, col_idade, col_dados):
-    """Executa a análise estatística de Harris-Boyd sugerindo cortes."""
+    """Executa a análise estatística de Harris-Boyd, agrupa resultados próximos e gera laudo clínico."""
     temp_df = pd.DataFrame()
     temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
     
     def clean_val(x):
         if pd.isna(x): return np.nan
         x = str(x).replace(',', '.')
-        # Mantém apenas números, ponto e sinal de negativo
         x = ''.join(c for c in x if c.isdigit() or c == '.' or c == '-')
         try: return float(x)
         except: return np.nan
         
-    # CORREÇÃO AQUI: Forçamos a conversão para float para remover qualquer herança de tipo 'category'
     temp_df['Data'] = pd.to_numeric(df[col_dados].apply(clean_val), errors='coerce')
-    
     temp_df = temp_df.dropna(subset=['Idade', 'Data'])
     temp_df = temp_df[temp_df['Idade'] >= 0]
     
     if temp_df.empty:
-        return pd.DataFrame()
+        return "Nenhuma estratificação recomendada (Dados insuficientes).", pd.DataFrame()
         
     max_age = int(temp_df['Idade'].max())
     if max_age < 1:
-        return pd.DataFrame()
+        return "Nenhuma estratificação recomendada (Variação de idade insuficiente).", pd.DataFrame()
         
-    results = []
+    valid_cuts = []
+    
     for age_cutoff in range(1, max_age):
         g1 = temp_df[temp_df['Idade'] <= age_cutoff]['Data']
         g2 = temp_df[temp_df['Idade'] > age_cutoff]['Data']
@@ -476,21 +465,88 @@ def run_harris_boyd(df, col_idade, col_dados):
         should_partition = partition_by_sd or partition_by_mean
         
         if should_partition:
-            results.append({
+            just = 'Desvio Padrão' if partition_by_sd and not partition_by_mean else ('Média' if partition_by_mean and not partition_by_sd else 'Ambos')
+            valid_cuts.append({
+                'age': age_cutoff,
+                'justificativa': just,
+                'd_value': d_value,
+                'sd_ratio': sd_ratio,
+                'mean1': mean1,
+                'mean2': mean2,
+                'n1': n1,
+                'n2': n2,
                 'Corte de Idade': f"<= {age_cutoff} vs > {age_cutoff}",
-                'Justificativa': 'Desvio Padrão' if partition_by_sd and not partition_by_mean else ('Média' if partition_by_mean and not partition_by_sd else 'Ambos'),
+                'Justificativa': just,
                 'D-value': round(d_value, 3),
                 'Razão DP': round(sd_ratio, 3),
                 'Média (<= Corte)': round(mean1, 2),
-                'Média (> Corte)': round(mean2, 2),
-                'N1': n1,
-                'N2': n2
+                'Média (> Corte)': round(mean2, 2)
             })
+            
+    if not valid_cuts:
+         return "O modelo estatístico não encontrou necessidade clínica ou variância suficiente para recomendar quebras de referência por idade para este analito.", pd.DataFrame()
+
+    # Lógica de Agrupamento (Clustering)
+    clusters = []
+    current_cluster = []
     
-    res_df = pd.DataFrame(results)
-    if not res_df.empty:
-        res_df = res_df.sort_values(by=['D-value', 'Razão DP'], ascending=False).head(10)
-    return res_df
+    # Agrupa idades caso tenham uma distância de até 3 anos umas das outras
+    for cut in sorted(valid_cuts, key=lambda x: x['age']):
+        if not current_cluster:
+            current_cluster.append(cut)
+        elif cut['age'] - current_cluster[-1]['age'] <= 3: 
+            current_cluster.append(cut)
+        else:
+            clusters.append(current_cluster)
+            current_cluster = [cut]
+    if current_cluster:
+        clusters.append(current_cluster)
+
+    best_cuts = []
+    for cluster in clusters:
+        # Pega o corte representativo com o sinal estatístico mais forte (maior D-value)
+        best = max(cluster, key=lambda x: x['d_value'])
+        best_cuts.append(best)
+
+    # Construção do Laudo Interpretativo para o Analista
+    best_cuts = sorted(best_cuts, key=lambda x: x['age'])
+    
+    texto_laudo = "### 💡 Sugestão Prática de Estratificação\n"
+    texto_laudo += "O algoritmo analisou as médias e a dispersão dos dados e detectou **"
+    texto_laudo += "1 ponto**" if len(best_cuts) == 1 else f"{len(best_cuts)} pontos**"
+    texto_laudo += " de mudança clínica significativa ao longo das idades:\n\n"
+
+    last_age = 0
+    for i, cut in enumerate(best_cuts):
+        idade_corte = cut['age']
+        m1 = cut['mean1']
+        m2 = cut['mean2']
+        
+        if i == 0:
+            faixa = f"De {last_age} a {idade_corte} anos"
+        else:
+            faixa = f"De {last_age + 1} a {idade_corte} anos"
+            
+        texto_laudo += f"**{i+1}. Grupo {faixa} (Média aprox: {m1:.1f})**\n"
+        texto_laudo += "🔹 *Por que separar?* "
+        if cut['justificativa'] == 'Média':
+            texto_laudo += f"Nesta fase da vida, há uma mudança expressiva nos resultados médios em comparação ao resto da população (salto para {m2:.1f}). "
+        elif cut['justificativa'] == 'Desvio Padrão':
+            texto_laudo += "Esta faixa etária apresenta uma variabilidade (dispersão de resultados) muito diferente das demais idades. "
+        else:
+            texto_laudo += f"Esta faixa etária possui um comportamento único, tanto pela média diferente (salto para {m2:.1f}) quanto pela alta dispersão dos dados. "
+        texto_laudo += f"\n\n"
+        last_age = idade_corte
+        
+    # Último grupo residual
+    texto_laudo += f"**{len(best_cuts)+1}. Grupo de {last_age + 1} anos em diante (Média aprox: {best_cuts[-1]['mean2']:.1f})**\n"
+    texto_laudo += "🔹 A partir desta barreira, o modelo considera que os resultados tendem a se estabilizar estatisticamente, compondo a faixa de referência principal para os laudos.\n"
+
+    # Converte tudo para DF bruto para exibir no modo avançado
+    raw_df = pd.DataFrame([{k: v for k, v in cut.items() if k not in ['age', 'justificativa', 'd_value', 'sd_ratio', 'mean1', 'mean2', 'n1', 'n2']} for cut in valid_cuts])
+    raw_df = raw_df.sort_values(by=['D-value', 'Razão DP'], ascending=False).head(10)
+    
+    return texto_laudo, raw_df
 
 @st.cache_data(show_spinner="Preparando arquivo para exportação...")
 def to_excel(df):
@@ -506,13 +562,11 @@ def to_csv(df):
 # --- FUNÇÕES DE INTERFACE ---
 
 def handle_select_all():
-    """Lógica para marcar/desmarcar todos os filtros baseado no estado da master checkbox."""
     new_state = st.session_state['select_all_master_checkbox']
     for rule in st.session_state.filter_rules:
         rule['p_check'] = new_state
 
 def reset_results_on_upload():
-    """Limpa os resultados anteriores quando um novo arquivo é carregado."""
     if 'filtered_result' in st.session_state: del st.session_state['filtered_result']
     if 'stratified_results' in st.session_state: del st.session_state['stratified_results']
     st.session_state.confirm_stratify = False
@@ -757,13 +811,16 @@ def main():
             if not st.session_state.col_idade or not st.session_state.col_dados:
                 st.info("⚠️ Para visualizar o estudo de Harris-Boyd, certifique-se de preencher a **'Age Column'** e a **'Data Column (Harris-Boyd)'** na seção de **Global Settings**.")
             else:
-                with st.spinner("Calculando o modelo de Harris-Boyd..."):
-                    hb_results = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
-                    if hb_results.empty:
-                        st.success("O modelo estatístico rodou, mas não encontrou partições de idade estritamente necessárias ou não há dados suficientes para esta coluna.")
-                    else:
-                        st.write("Top cortes recomendados pelo modelo (ordenados por relevância e distanciamento):")
-                        st.dataframe(hb_results, use_container_width=True, hide_index=True)
+                with st.spinner("Calculando e gerando laudo interpretativo..."):
+                    texto_interpretativo, raw_df = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
+                    
+                    # Mostra a explicação clínica formatada
+                    st.markdown(texto_interpretativo)
+                    
+                    # Esconde a tabela complexa em um expansor opcional
+                    if not raw_df.empty:
+                        with st.expander("Ver dados estatísticos completos (Modo Avançado)"):
+                            st.dataframe(raw_df, use_container_width=True, hide_index=True)
         else:
             st.info("⚠️ Faça o upload de uma planilha em 'Global Settings' para utilizar esta função.")
         
