@@ -431,11 +431,14 @@ def run_harris_boyd(df, col_idade, col_dados):
     def clean_val(x):
         if pd.isna(x): return np.nan
         x = str(x).replace(',', '.')
+        # Mantém apenas números, ponto e sinal de negativo
         x = ''.join(c for c in x if c.isdigit() or c == '.' or c == '-')
         try: return float(x)
         except: return np.nan
         
-    temp_df['Data'] = df[col_dados].apply(clean_val)
+    # CORREÇÃO AQUI: Forçamos a conversão para float para remover qualquer herança de tipo 'category'
+    temp_df['Data'] = pd.to_numeric(df[col_dados].apply(clean_val), errors='coerce')
+    
     temp_df = temp_df.dropna(subset=['Idade', 'Data'])
     temp_df = temp_df[temp_df['Idade'] >= 0]
     
