@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.3.0 - Atualização: Tradutor Clínico para Harris-Boyd
-# Melhorias: Agrupamento automático de idades e geração de texto explicativo para auxiliar analistas de laboratório na definição dos Intervalos de Referência.
+# Versão 2.4.0 - Atualização: Visualização Interativa de Boxplots
+# Melhorias: Adicionado gerador de Boxplot dinâmico com escolha de intervalos de idade sob demanda.
 
 import streamlit as st
 import pandas as pd
@@ -17,6 +17,8 @@ from typing import List, Dict, Any, Optional
 import tempfile
 import os
 import shutil
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(layout="wide", page_title="Data Sift")
@@ -60,7 +62,7 @@ This section contains the essential settings that are shared between both tools.
   Opens a window to select the source data file. It supports `.xlsx`, `.xls`, and `.csv` formats.
 
 - **Age Column / Sex/Gender / Data Column:**
-  Fields to **select** the column names in your spreadsheet. The **Data Column** is specifically used to automatically run the Harris-Boyd stratification study.
+  Fields to **select** the column names in your spreadsheet. The **Data Column** is specifically used to automatically run the Harris-Boyd stratification study and generate charts.
 
 - **Output Format:**
   A selection menu to choose the format of the generated files. Choose `Excel (.xlsx)` for Microsoft Excel or `CSV (.csv)` for a lighter format.
@@ -90,8 +92,8 @@ Each row you add is a condition to **remove** data. If a row in your spreadsheet
 
 This tool splits your spreadsheet into **multiple smaller files**, where each file represents a subgroup of interest.
 
-**Harris-Boyd Study:**
-Automatically evaluates the selected Data Column and Age Column to suggest the most statistically relevant age cuts based on the Harris-Boyd criteria (CLSI EP28-A3c).
+**Harris-Boyd Study & Charts:**
+Automatically evaluates the selected Data Column and Age Column to suggest the most statistically relevant age cuts. You can also generate Boxplot charts to visually inspect the data distribution.
 
 **How Stratification Works:**
 - **Stratification Options by Sex/Gender:** Select the genders you want to include.
@@ -415,7 +417,6 @@ def load_dataframe(uploaded_file):
 
 @st.cache_data(show_spinner=False)
 def run_harris_boyd(df, col_idade, col_dados):
-    """Executa a análise estatística de Harris-Boyd, agrupa resultados próximos e gera laudo clínico."""
     temp_df = pd.DataFrame()
     temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
     
@@ -486,14 +487,11 @@ def run_harris_boyd(df, col_idade, col_dados):
     if not valid_cuts:
          return "O modelo estatístico não encontrou necessidade clínica ou variância suficiente para recomendar quebras de referência por idade para este analito.", pd.DataFrame()
 
-    # Ordena os cortes por idade para facilitar a lógica a seguir e a exibição
     valid_cuts = sorted(valid_cuts, key=lambda x: x['age'])
 
-    # Lógica de Agrupamento (Clustering)
     clusters = []
     current_cluster = []
     
-    # Agrupa idades caso tenham uma distância de até 3 anos umas das outras
     for cut in valid_cuts:
         if not current_cluster:
             current_cluster.append(cut)
@@ -507,13 +505,11 @@ def run_harris_boyd(df, col_idade, col_dados):
 
     best_cuts = []
     for cluster in clusters:
-        # Pega o corte representativo com o sinal estatístico mais forte (maior D-value)
         best = max(cluster, key=lambda x: x['d_value'])
         best_cuts.append(best)
 
     best_cuts = sorted(best_cuts, key=lambda x: x['age'])
     
-    # Construção do Laudo Interpretativo para o Analista
     texto_laudo = "### 💡 Sugestão Prática de Estratificação\n"
     texto_laudo += "O algoritmo analisou as médias e a dispersão dos dados e detectou **"
     texto_laudo += "1 ponto**" if len(best_cuts) == 1 else f"{len(best_cuts)} pontos**"
@@ -541,11 +537,9 @@ def run_harris_boyd(df, col_idade, col_dados):
         texto_laudo += f"\n\n"
         last_age = idade_corte
         
-    # Último grupo residual
     texto_laudo += f"**{len(best_cuts)+1}. Grupo de {last_age + 1} anos em diante (Média aprox: {best_cuts[-1]['mean2']:.1f})**\n"
     texto_laudo += "🔹 A partir desta barreira, o modelo considera que os resultados tendem a se estabilizar estatisticamente, compondo a faixa de referência principal para os laudos.\n"
 
-    # Montagem da tabela completa (Sem limite de linhas e ordenada cronologicamente)
     idades_sugeridas = [c['age'] for c in best_cuts]
     raw_data_list = []
     
@@ -565,6 +559,50 @@ def run_harris_boyd(df, col_idade, col_dados):
     raw_df = pd.DataFrame(raw_data_list)
     
     return texto_laudo, raw_df
+
+@st.cache_data(show_spinner=False)
+def plot_boxplot_idade(df, col_idade, col_dados, intervalo):
+    """Gera um gráfico de Boxplot dinâmico agrupando os pacientes pela idade."""
+    temp_df = pd.DataFrame()
+    temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
+    
+    def clean_val(x):
+        if pd.isna(x): return np.nan
+        x = str(x).replace(',', '.')
+        x = ''.join(c for c in x if c.isdigit() or c == '.' or c == '-')
+        try: return float(x)
+        except: return np.nan
+        
+    temp_df['Data'] = pd.to_numeric(df[col_dados].apply(clean_val), errors='coerce')
+    temp_df = temp_df.dropna(subset=['Idade', 'Data'])
+    temp_df = temp_df[temp_df['Idade'] >= 0]
+    
+    if temp_df.empty: return None
+
+    # Lógica para agrupar as idades em "baldes" (ex: 0-4, 5-9)
+    if intervalo > 1:
+        temp_df['Idade_Bin'] = (temp_df['Idade'] // intervalo) * intervalo
+        temp_df['Idade_Label'] = temp_df['Idade_Bin'].astype(int).astype(str) + " a " + (temp_df['Idade_Bin'] + intervalo - 1).astype(int).astype(str)
+        temp_df = temp_df.sort_values('Idade_Bin')
+        x_col = 'Idade_Label'
+    else:
+        temp_df['Idade_Label'] = temp_df['Idade'].astype(int)
+        temp_df = temp_df.sort_values('Idade')
+        x_col = 'Idade_Label'
+
+    fig, ax = plt.subplots(figsize=(16, 6))
+    
+    # showfliers=False é o grande truque clínico! Oculta os outliers extremos e foca nas caixas e medianas.
+    sns.boxplot(data=temp_df, x=x_col, y='Data', color='#a2cffe', ax=ax, showfliers=False)
+    
+    ax.set_title(f'Distribuição de {col_dados} por Idade', fontsize=16, fontweight='bold', pad=15)
+    ax.set_xlabel('Idade (Anos)', fontsize=14, labelpad=10)
+    ax.set_ylabel('Resultados (Sem Outliers Extremos)', fontsize=14, labelpad=10)
+    plt.xticks(rotation=45, ha='right')
+    plt.grid(axis='y', linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    
+    return fig
 
 @st.cache_data(show_spinner="Preparando arquivo para exportação...")
 def to_excel(df):
@@ -831,14 +869,31 @@ def main():
             else:
                 with st.spinner("Calculando e gerando laudo interpretativo..."):
                     texto_interpretativo, raw_df = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
-                    
-                    # Mostra a explicação clínica formatada
                     st.markdown(texto_interpretativo)
                     
-                    # Esconde a tabela complexa em um expansor opcional
                     if not raw_df.empty:
                         with st.expander("Ver dados estatísticos completos (Modo Avançado)"):
                             st.dataframe(raw_df, use_container_width=True, hide_index=True)
+                            
+            # NOVO BLOCO: Gráfico Boxplot Dinâmico sob Demanda
+            st.markdown("---")
+            st.header("📊 Análise Visual de Dispersão (Boxplot)")
+            st.markdown("Avalie a variação das medianas e das caixas gerando o gráfico interativo abaixo.")
+            
+            if st.session_state.col_idade and st.session_state.col_dados:
+                col1, col2 = st.columns([1, 2])
+                intervalo_plot = col1.number_input("Tamanho do intervalo de idades (ex: 5 = agrupar a cada 5 anos):", min_value=1, max_value=20, value=5, step=1)
+                
+                # Para não gerar sozinho, amarramos num botão
+                if col2.button("Gerar Gráfico de Boxplot", type="primary", use_container_width=True):
+                    with st.spinner("Desenhando o gráfico..."):
+                        fig = plot_boxplot_idade(df, st.session_state.col_idade, st.session_state.col_dados, intervalo_plot)
+                        if fig:
+                            st.pyplot(fig)
+                        else:
+                            st.warning("Não há dados suficientes ou válidos na coluna selecionada para gerar o gráfico.")
+            else:
+                st.info("⚠️ Selecione a coluna de Idade e a coluna de Dados nas configurações globais para habilitar o gráfico.")
         else:
             st.info("⚠️ Faça o upload de uma planilha em 'Global Settings' para utilizar esta função.")
         
