@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.4.0 - Atualização: Visualização Interativa de Boxplots
-# Melhorias: Adicionado gerador de Boxplot dinâmico com escolha de intervalos de idade sob demanda.
+# Versão 2.4.1 - Atualização: Integridade Absoluta de Dados (Zero-Rounding)
+# Melhorias: Alteração do motor DuckDB para atuar apenas como indexador de filtro, 
+# preservando 100% da tipagem, formatação e precisão decimal do DataFrame original.
 
 import streamlit as st
 import pandas as pd
@@ -236,15 +237,30 @@ class DataProcessor:
             return df
 
         where_clause = " AND ".join(exclusion_clauses)
-        query = f"SELECT * FROM df WHERE {where_clause}"
+        
+        # Criação de um ID único temporário para garantir subset perfeito do Pandas original sem uso de CAST pelo DuckDB
+        df['_temp_row_id'] = range(len(df))
+        
+        # DuckDB atua apenas como motor de busca dos IDs das linhas
+        query = f"SELECT _temp_row_id FROM df WHERE {where_clause}"
 
         try:
             progress_bar.progress(0.8, text="Executando Motor DuckDB (SQL)...")
-            filtered_df = duckdb.query(query).df()
+            valid_ids_df = duckdb.query(query).df()
+            
+            # Recorta a base de dados utilizando o DataFrame Pandas Original, preservando formatação absoluta
+            filtered_df = df[df['_temp_row_id'].isin(valid_ids_df['_temp_row_id'])].copy()
+            
+            # Limpeza das colunas auxiliares
+            filtered_df.drop(columns=['_temp_row_id'], inplace=True)
+            df.drop(columns=['_temp_row_id'], inplace=True)
+            
             progress_bar.progress(1.0, text="Filtering complete!")
             return filtered_df
         except Exception as e:
             st.error(f"Erro no processamento SQL: {e}")
+            if '_temp_row_id' in df.columns:
+                df.drop(columns=['_temp_row_id'], inplace=True)
             return df
     
     def apply_stratification(self, df: pd.DataFrame, strata_config: Dict, global_config: Dict, progress_bar) -> Dict[str, pd.DataFrame]:
@@ -275,6 +291,9 @@ class DataProcessor:
         total_files = len(final_strata_to_process)
         generated_dfs = {}
 
+        # Usa IDs temporários para isolar a integridade do Pandas e DuckDB
+        df['_temp_row_id'] = range(len(df))
+
         for i, stratum in enumerate(final_strata_to_process):
             progress = (i + 1) / total_files
             conditions = []
@@ -291,18 +310,25 @@ class DataProcessor:
                 conditions.append(self._build_single_sql_cond(safe_sexo, '=', sex_rule['value']))
 
             where_clause = " AND ".join([f"({c})" for c in conditions]) if conditions else "TRUE"
-            query = f"SELECT * FROM df WHERE {where_clause}"
+            
+            # Puxa apenas os índices pelo DuckDB
+            query = f"SELECT _temp_row_id FROM df WHERE {where_clause}"
 
             filename = self._generate_stratum_name(age_rule, sex_rule)
             progress_bar.progress(progress, text=f"Gerando estrato {i+1}/{total_files}: {filename}...")
             
             try:
-                stratum_df = duckdb.query(query).df()
-                if not stratum_df.empty:
+                valid_ids_df = duckdb.query(query).df()
+                if not valid_ids_df.empty:
+                    # Aplica a máscara e cria o arquivo estratificado 100% fiel
+                    stratum_df = df[df['_temp_row_id'].isin(valid_ids_df['_temp_row_id'])].copy()
+                    stratum_df.drop(columns=['_temp_row_id'], inplace=True)
                     generated_dfs[filename] = stratum_df
             except Exception as e:
                 st.warning(f"Não foi possível gerar o estrato {filename} devido a erro nos valores: {e}")
 
+        # Limpeza no DF base
+        df.drop(columns=['_temp_row_id'], inplace=True)
         progress_bar.progress(1.0, text="Estratificação completa!")
         return generated_dfs
 
@@ -492,14 +518,34 @@ def run_harris_boyd(df, col_idade, col_dados):
     clusters = []
     current_cluster = []
     
-    for cut in valid_cuts:
+    for i, cut in enumerate(valid_cuts):
         if not current_cluster:
             current_cluster.append(cut)
-        elif cut['age'] - current_cluster[-1]['age'] <= 3: 
-            current_cluster.append(cut)
-        else:
+            continue
+            
+        prev_cut = valid_cuts[i-1]
+        age_gap = cut['age'] - prev_cut['age']
+        cluster_max_d = max([c['d_value'] for c in current_cluster])
+        
+        if age_gap > 3:
             clusters.append(current_cluster)
             current_cluster = [cut]
+            continue
+        
+        drop_from_peak = cluster_max_d - cut['d_value']
+        if drop_from_peak > 0.4 and drop_from_peak > (cluster_max_d * 0.25):
+            clusters.append(current_cluster)
+            current_cluster = [cut]
+            continue
+            
+        d_diff = cut['d_value'] - prev_cut['d_value']
+        if d_diff > 0.15 and drop_from_peak > 0.15:
+            clusters.append(current_cluster)
+            current_cluster = [cut]
+            continue
+            
+        current_cluster.append(cut)
+        
     if current_cluster:
         clusters.append(current_cluster)
 
@@ -562,7 +608,6 @@ def run_harris_boyd(df, col_idade, col_dados):
 
 @st.cache_data(show_spinner=False)
 def plot_boxplot_idade(df, col_idade, col_dados, intervalo):
-    """Gera um gráfico de Boxplot dinâmico agrupando os pacientes pela idade."""
     temp_df = pd.DataFrame()
     temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
     
@@ -579,7 +624,6 @@ def plot_boxplot_idade(df, col_idade, col_dados, intervalo):
     
     if temp_df.empty: return None
 
-    # Lógica para agrupar as idades em "baldes" (ex: 0-4, 5-9)
     if intervalo > 1:
         temp_df['Idade_Bin'] = (temp_df['Idade'] // intervalo) * intervalo
         temp_df['Idade_Label'] = temp_df['Idade_Bin'].astype(int).astype(str) + " a " + (temp_df['Idade_Bin'] + intervalo - 1).astype(int).astype(str)
@@ -592,7 +636,6 @@ def plot_boxplot_idade(df, col_idade, col_dados, intervalo):
 
     fig, ax = plt.subplots(figsize=(16, 6))
     
-    # showfliers=False é o grande truque clínico! Oculta os outliers extremos e foca nas caixas e medianas.
     sns.boxplot(data=temp_df, x=x_col, y='Data', color='#a2cffe', ax=ax, showfliers=False)
     
     ax.set_title(f'Distribuição de {col_dados} por Idade', fontsize=16, fontweight='bold', pad=15)
@@ -875,7 +918,6 @@ def main():
                         with st.expander("Ver dados estatísticos completos (Modo Avançado)"):
                             st.dataframe(raw_df, use_container_width=True, hide_index=True)
                             
-            # NOVO BLOCO: Gráfico Boxplot Dinâmico sob Demanda
             st.markdown("---")
             st.header("📊 Análise Visual de Dispersão (Boxplot)")
             st.markdown("Avalie a variação das medianas e das caixas gerando o gráfico interativo abaixo.")
@@ -884,7 +926,6 @@ def main():
                 col1, col2 = st.columns([1, 2])
                 intervalo_plot = col1.number_input("Tamanho do intervalo de idades (ex: 5 = agrupar a cada 5 anos):", min_value=1, max_value=20, value=5, step=1)
                 
-                # Para não gerar sozinho, amarramos num botão
                 if col2.button("Gerar Gráfico de Boxplot", type="primary", use_container_width=True):
                     with st.spinner("Desenhando o gráfico..."):
                         fig = plot_boxplot_idade(df, st.session_state.col_idade, st.session_state.col_dados, intervalo_plot)
