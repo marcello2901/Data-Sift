@@ -564,7 +564,7 @@ def run_harris_boyd(df, col_idade, col_dados):
         texto_laudo += f"**{i+1}. Group {faixa} (Approx. Mean: {m1:.1f})**\n"
         texto_laudo += "🔹 *Why separate?* "
         if cut['justificativa'] == 'Mean':
-            texto_laudo += f"In this life stage, there is a significant change in mean results compared to the rest of the population (jump to {m2:.1f}). "
+            texto_laudo += f"There is a significant change in mean results compared to the rest of the population (jump to {m2:.1f}). "
         elif cut['justificativa'] == 'Standard Deviation':
             texto_laudo += "This age group presents a very different variability (data dispersion) compared to other ages. "
         else:
