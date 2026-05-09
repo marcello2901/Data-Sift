@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.4.2 - Atualização: Internacionalização (i18n)
-# Melhorias: Todos os textos de UI, laudos do Harris-Boyd e gráficos do Boxplot foram traduzidos para o Inglês para manter o padrão do aplicativo.
+# Versão 2.5.0 - Atualização: Visualização Interativa de Dispersão
+# Melhorias: Adicionado seletor de tipo de gráfico (Boxplot, Moving Average, Moving Median) para análise de tendência.
 
 import streamlit as st
 import pandas as pd
@@ -205,13 +205,13 @@ class DataProcessor:
         active_filters = [f for f in filters_config if f['p_check']]
         
         if not active_filters:
-            progress_bar.progress(1.0, text="Nenhum filtro ativo.")
+            progress_bar.progress(1.0, text="No active filter rules.")
             return df
 
         exclusion_clauses = []
         
         for i, f_config in enumerate(active_filters):
-            progress_bar.progress((i + 1) / len(active_filters), text=f"Mapeando regra SQL {i+1}...")
+            progress_bar.progress((i + 1) / len(active_filters), text=f"Mapping SQL rule {i+1}...")
             
             col_config_str = f_config.get('p_col', '')
             cols_to_check = [c.strip() for c in col_config_str.split(';') if c.strip()]
@@ -232,7 +232,7 @@ class DataProcessor:
             exclusion_clauses.append(f"NOT ({rule_sql})")
 
         if not exclusion_clauses:
-            progress_bar.progress(1.0, text="Processamento concluído!")
+            progress_bar.progress(1.0, text="Processing complete!")
             return df
 
         where_clause = " AND ".join(exclusion_clauses)
@@ -241,7 +241,7 @@ class DataProcessor:
         query = f"SELECT _temp_row_id FROM df WHERE {where_clause}"
 
         try:
-            progress_bar.progress(0.8, text="Executando Motor DuckDB (SQL)...")
+            progress_bar.progress(0.8, text="Executing DuckDB Engine (SQL)...")
             valid_ids_df = duckdb.query(query).df()
             
             filtered_df = df[df['_temp_row_id'].isin(valid_ids_df['_temp_row_id'])].copy()
@@ -252,7 +252,7 @@ class DataProcessor:
             progress_bar.progress(1.0, text="Filtering complete!")
             return filtered_df
         except Exception as e:
-            st.error(f"Erro no processamento SQL: {e}")
+            st.error(f"SQL Processing Error: {e}")
             if '_temp_row_id' in df.columns:
                 df.drop(columns=['_temp_row_id'], inplace=True)
             return df
@@ -306,7 +306,7 @@ class DataProcessor:
             query = f"SELECT _temp_row_id FROM df WHERE {where_clause}"
 
             filename = self._generate_stratum_name(age_rule, sex_rule)
-            progress_bar.progress(progress, text=f"Gerando estrato {i+1}/{total_files}: {filename}...")
+            progress_bar.progress(progress, text=f"Generating stratum {i+1}/{total_files}: {filename}...")
             
             try:
                 valid_ids_df = duckdb.query(query).df()
@@ -315,10 +315,10 @@ class DataProcessor:
                     stratum_df.drop(columns=['_temp_row_id'], inplace=True)
                     generated_dfs[filename] = stratum_df
             except Exception as e:
-                st.warning(f"Não foi possível gerar o estrato {filename} devido a erro nos valores: {e}")
+                st.warning(f"Could not generate stratum {filename} due to an error in values: {e}")
 
         df.drop(columns=['_temp_row_id'], inplace=True)
-        progress_bar.progress(1.0, text="Estratificação completa!")
+        progress_bar.progress(1.0, text="Stratification complete!")
         return generated_dfs
 
     def _generate_stratum_name(self, age_rule: Optional[Dict], sex_rule: Optional[Dict]) -> str:
@@ -364,7 +364,7 @@ class DataProcessor:
 
 # --- FUNÇÕES AUXILIARES OTIMIZADAS ---
 
-@st.cache_data(show_spinner="Lendo arquivo...")
+@st.cache_data(show_spinner="Reading file...")
 def load_dataframe(uploaded_file):
     if uploaded_file is None: return None
     try:
@@ -383,7 +383,7 @@ def load_dataframe(uploaded_file):
                                (f.lower().endswith('.csv') or f.lower().endswith(('.xlsx', '.xls')))]
                 
                 if not valid_files:
-                    st.error("O ZIP não contém arquivos CSV ou Excel válidos.")
+                    st.error("The ZIP file contains no valid CSV or Excel files.")
                     os.remove(tmp_path)
                     return None
                 
@@ -427,7 +427,7 @@ def load_dataframe(uploaded_file):
         
         return df
     except Exception as e:
-        st.error(f"Erro ao ler o arquivo: {e}")
+        st.error(f"Error reading file: {e}")
         return None
 
 @st.cache_data(show_spinner=False)
@@ -564,7 +564,7 @@ def run_harris_boyd(df, col_idade, col_dados):
         texto_laudo += f"**{i+1}. Group {faixa} (Approx. Mean: {m1:.1f})**\n"
         texto_laudo += "🔹 *Why separate?* "
         if cut['justificativa'] == 'Mean':
-            texto_laudo += f"In this There is a significant change in mean results compared to the rest of the population (jump to {m2:.1f}). "
+            texto_laudo += f"In this life stage, there is a significant change in mean results compared to the rest of the population (jump to {m2:.1f}). "
         elif cut['justificativa'] == 'Standard Deviation':
             texto_laudo += "This age group presents a very different variability (data dispersion) compared to other ages. "
         else:
@@ -596,7 +596,8 @@ def run_harris_boyd(df, col_idade, col_dados):
     return texto_laudo, raw_df
 
 @st.cache_data(show_spinner=False)
-def plot_boxplot_idade(df, col_idade, col_dados, intervalo):
+def plot_dispersion_chart(df, col_idade, col_dados, intervalo, chart_type):
+    """Generates an interactive dispersion chart grouped by age bins."""
     temp_df = pd.DataFrame()
     temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
     
@@ -619,17 +620,26 @@ def plot_boxplot_idade(df, col_idade, col_dados, intervalo):
         temp_df = temp_df.sort_values('Idade_Bin')
         x_col = 'Idade_Label'
     else:
-        temp_df['Idade_Label'] = temp_df['Idade'].astype(int)
+        temp_df['Idade_Label'] = temp_df['Idade'].astype(int).astype(str)
         temp_df = temp_df.sort_values('Idade')
         x_col = 'Idade_Label'
 
     fig, ax = plt.subplots(figsize=(16, 6))
     
-    sns.boxplot(data=temp_df, x=x_col, y='Data', color='#a2cffe', ax=ax, showfliers=False)
+    if chart_type == 'Boxplot':
+        sns.boxplot(data=temp_df, x=x_col, y='Data', color='#a2cffe', ax=ax, showfliers=False)
+        ax.set_ylabel('Results (Without Extreme Outliers)', fontsize=14, labelpad=10)
+    elif chart_type == 'Moving Average':
+        agg_df = temp_df.groupby(x_col, sort=False)['Data'].mean().reset_index()
+        ax.plot(agg_df[x_col], agg_df['Data'], marker='o', color='#ff6666', linewidth=2, markersize=8)
+        ax.set_ylabel('Mean Results', fontsize=14, labelpad=10)
+    elif chart_type == 'Moving Median':
+        agg_df = temp_df.groupby(x_col, sort=False)['Data'].median().reset_index()
+        ax.plot(agg_df[x_col], agg_df['Data'], marker='s', color='#2ca02c', linewidth=2, markersize=8)
+        ax.set_ylabel('Median Results', fontsize=14, labelpad=10)
     
-    ax.set_title(f'Distribution of {col_dados} by Age', fontsize=16, fontweight='bold', pad=15)
+    ax.set_title(f'Distribution of {col_dados} by Age ({chart_type})', fontsize=16, fontweight='bold', pad=15)
     ax.set_xlabel('Age (Years)', fontsize=14, labelpad=10)
-    ax.set_ylabel('Results (Without Extreme Outliers)', fontsize=14, labelpad=10)
     plt.xticks(rotation=45, ha='right')
     plt.grid(axis='y', linestyle='--', alpha=0.5)
     plt.tight_layout()
@@ -839,7 +849,7 @@ def main():
         c1, c2, c3, c4 = st.columns(4)
         with c1: st.selectbox("Age Column", options=column_options, key="col_idade", index=None, placeholder="Select Age column")
         with c2: st.selectbox("Sex/Gender Column", options=column_options, key="col_sexo", index=None, placeholder="Select Sex/Gender")
-        with c3: st.selectbox("Data Column", options=column_options, key="col_dados", index=None, placeholder="Select Data Column")
+        with c3: st.selectbox("Data Column (Harris-Boyd)", options=column_options, key="col_dados", index=None, placeholder="Select Data Column")
         with c4: st.selectbox("Output Format", ["CSV (.csv)", "Excel (.xlsx)"], key="output_format")
 
         st.session_state.sex_column_is_valid = True
@@ -908,16 +918,17 @@ def main():
                             st.dataframe(raw_df, use_container_width=True, hide_index=True)
                             
             st.markdown("---")
-            st.header("📊 Visual Dispersion Analysis (Boxplot)")
-            st.markdown("Evaluate the variation of medians and boxes by generating the interactive chart below.")
+            st.header("📊 Visual Dispersion Analysis")
+            st.markdown("Evaluate the variation of results by generating the interactive chart below.")
             
             if st.session_state.col_idade and st.session_state.col_dados:
-                col1, col2 = st.columns([1, 2])
-                intervalo_plot = col1.number_input("Age interval size (e.g., 5 = group every 5 years):", min_value=1, max_value=20, value=5, step=1)
+                col1, col2, col3 = st.columns([1, 1, 2])
+                chart_type = col1.selectbox("Chart Type:", ["Boxplot", "Moving Average", "Moving Median"])
+                intervalo_plot = col2.number_input("Age interval size (years):", min_value=1, max_value=20, value=5, step=1)
                 
-                if col2.button("Generate Boxplot Chart", type="primary", use_container_width=True):
+                if col3.button("Generate Chart", type="primary", use_container_width=True):
                     with st.spinner("Drawing chart..."):
-                        fig = plot_boxplot_idade(df, st.session_state.col_idade, st.session_state.col_dados, intervalo_plot)
+                        fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, intervalo_plot, chart_type)
                         if fig:
                             st.pyplot(fig)
                         else:
