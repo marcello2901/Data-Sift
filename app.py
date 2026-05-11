@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.6.0 - Atualização: Filtro e Agrupamento por Sexo nos Gráficos de Dispersão
+# Versão 2.6.1 - Correção: Sintaxe do Seaborn Boxplot
 # Melhorias: Adicionado recurso para filtrar quais sexos o gráfico exibirá e opção de agrupamento (sobreposição) com cores distintas.
 
 import streamlit as st
@@ -642,8 +642,11 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     hue_col = 'Sexo' if group_by_sex and 'Sexo' in temp_df.columns else None
     
     if chart_type == 'Boxplot':
-        # showfliers=False hides extreme outliers focusing on the boxes and medians.
-        sns.boxplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2' if hue_col else color='#a2cffe', ax=ax, showfliers=False)
+        # Correção da Sintaxe: Parâmetros condicionados corretamente
+        if hue_col:
+            sns.boxplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2', ax=ax, showfliers=False)
+        else:
+            sns.boxplot(data=temp_df, x=x_col, y='Data', color='#a2cffe', ax=ax, showfliers=False)
         ax.set_ylabel('Results (Without Extreme Outliers)', fontsize=14, labelpad=10)
     
     elif chart_type == 'Moving Average':
@@ -942,7 +945,6 @@ def main():
                         with st.expander("View full statistical data (Advanced Mode)"):
                             st.dataframe(raw_df, use_container_width=True, hide_index=True)
                             
-            # NOVO BLOCO: Gráfico de Dispersão Dinâmico com Filtro de Sexo
             st.markdown("---")
             st.header("📊 Visual Dispersion Analysis")
             st.markdown("Evaluate the variation of results by generating the interactive chart below.")
