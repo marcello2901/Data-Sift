@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.5.0 - Atualização: Visualização Interativa de Dispersão
-# Melhorias: Adicionado seletor de tipo de gráfico (Boxplot, Moving Average, Moving Median) para análise de tendência.
+# Versão 2.6.0 - Atualização: Filtro e Agrupamento por Sexo nos Gráficos de Dispersão
+# Melhorias: Adicionado recurso para filtrar quais sexos o gráfico exibirá e opção de agrupamento (sobreposição) com cores distintas.
 
 import streamlit as st
 import pandas as pd
@@ -564,7 +564,7 @@ def run_harris_boyd(df, col_idade, col_dados):
         texto_laudo += f"**{i+1}. Group {faixa} (Approx. Mean: {m1:.1f})**\n"
         texto_laudo += "🔹 *Why separate?* "
         if cut['justificativa'] == 'Mean':
-            texto_laudo += f"There is a significant change in mean results compared to the rest of the population (jump to {m2:.1f}). "
+            texto_laudo += f"In this life stage, there is a significant change in mean results compared to the rest of the population (jump to {m2:.1f}). "
         elif cut['justificativa'] == 'Standard Deviation':
             texto_laudo += "This age group presents a very different variability (data dispersion) compared to other ages. "
         else:
@@ -596,8 +596,8 @@ def run_harris_boyd(df, col_idade, col_dados):
     return texto_laudo, raw_df
 
 @st.cache_data(show_spinner=False)
-def plot_dispersion_chart(df, col_idade, col_dados, intervalo, chart_type):
-    """Generates an interactive dispersion chart grouped by age bins."""
+def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_type, group_by_sex, selected_sexes):
+    """Generates an interactive dispersion chart grouped by age bins and optionally by sex."""
     temp_df = pd.DataFrame()
     temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
     
@@ -609,41 +609,66 @@ def plot_dispersion_chart(df, col_idade, col_dados, intervalo, chart_type):
         except: return np.nan
         
     temp_df['Data'] = pd.to_numeric(df[col_dados].apply(clean_val), errors='coerce')
+    
+    if col_sexo and col_sexo in df.columns:
+        temp_df['Sexo'] = df[col_sexo].astype(str)
+    else:
+        group_by_sex = False
+
     temp_df = temp_df.dropna(subset=['Idade', 'Data'])
     temp_df = temp_df[temp_df['Idade'] >= 0]
     
+    # Filter dataset by selected sexes if applicable
+    if 'Sexo' in temp_df.columns and selected_sexes:
+        temp_df = temp_df[temp_df['Sexo'].isin(selected_sexes)]
+        
     if temp_df.empty: return None
 
+    # Logic to group ages into bins and format labels correctly to avoid alphabetical sorting issues
     if intervalo > 1:
         temp_df['Idade_Bin'] = (temp_df['Idade'] // intervalo) * intervalo
         temp_df['Idade_Label'] = temp_df['Idade_Bin'].astype(int).astype(str) + " to " + (temp_df['Idade_Bin'] + intervalo - 1).astype(int).astype(str)
-        temp_df = temp_df.sort_values('Idade_Bin')
+        # Ensure categorical sorting based on the numeric bin value
+        categories = temp_df.drop_duplicates('Idade_Bin').sort_values('Idade_Bin')['Idade_Label'].tolist()
+        temp_df['Idade_Label'] = pd.Categorical(temp_df['Idade_Label'], categories=categories, ordered=True)
         x_col = 'Idade_Label'
     else:
-        temp_df['Idade_Label'] = temp_df['Idade'].astype(int).astype(str)
-        temp_df = temp_df.sort_values('Idade')
+        temp_df['Idade_Label'] = temp_df['Idade'].astype(int)
+        temp_df = temp_df.sort_values('Idade_Label')
         x_col = 'Idade_Label'
 
     fig, ax = plt.subplots(figsize=(16, 6))
     
+    hue_col = 'Sexo' if group_by_sex and 'Sexo' in temp_df.columns else None
+    
     if chart_type == 'Boxplot':
-        sns.boxplot(data=temp_df, x=x_col, y='Data', color='#a2cffe', ax=ax, showfliers=False)
+        # showfliers=False hides extreme outliers focusing on the boxes and medians.
+        sns.boxplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2' if hue_col else color='#a2cffe', ax=ax, showfliers=False)
         ax.set_ylabel('Results (Without Extreme Outliers)', fontsize=14, labelpad=10)
+    
     elif chart_type == 'Moving Average':
-        agg_df = temp_df.groupby(x_col, sort=False)['Data'].mean().reset_index()
-        ax.plot(agg_df[x_col], agg_df['Data'], marker='o', color='#ff6666', linewidth=2, markersize=8)
+        if hue_col:
+            sns.lineplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2', marker='o', errorbar=None, ax=ax, linewidth=2, markersize=8)
+        else:
+            sns.lineplot(data=temp_df, x=x_col, y='Data', marker='o', color='#ff6666', errorbar=None, ax=ax, linewidth=2, markersize=8)
         ax.set_ylabel('Mean Results', fontsize=14, labelpad=10)
+    
     elif chart_type == 'Moving Median':
-        agg_df = temp_df.groupby(x_col, sort=False)['Data'].median().reset_index()
-        ax.plot(agg_df[x_col], agg_df['Data'], marker='s', color='#2ca02c', linewidth=2, markersize=8)
+        if hue_col:
+            sns.lineplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2', estimator=np.median, marker='s', errorbar=None, ax=ax, linewidth=2, markersize=8)
+        else:
+            sns.lineplot(data=temp_df, x=x_col, y='Data', estimator=np.median, marker='s', color='#2ca02c', errorbar=None, ax=ax, linewidth=2, markersize=8)
         ax.set_ylabel('Median Results', fontsize=14, labelpad=10)
     
     ax.set_title(f'Distribution of {col_dados} by Age ({chart_type})', fontsize=16, fontweight='bold', pad=15)
     ax.set_xlabel('Age (Years)', fontsize=14, labelpad=10)
     plt.xticks(rotation=45, ha='right')
     plt.grid(axis='y', linestyle='--', alpha=0.5)
-    plt.tight_layout()
     
+    if hue_col:
+        ax.legend(title='Sex/Gender')
+        
+    plt.tight_layout()
     return fig
 
 @st.cache_data(show_spinner="Preparing file for export...")
@@ -917,22 +942,51 @@ def main():
                         with st.expander("View full statistical data (Advanced Mode)"):
                             st.dataframe(raw_df, use_container_width=True, hide_index=True)
                             
+            # NOVO BLOCO: Gráfico de Dispersão Dinâmico com Filtro de Sexo
             st.markdown("---")
             st.header("📊 Visual Dispersion Analysis")
             st.markdown("Evaluate the variation of results by generating the interactive chart below.")
             
             if st.session_state.col_idade and st.session_state.col_dados:
-                col1, col2, col3 = st.columns([1, 1, 2])
-                chart_type = col1.selectbox("Chart Type:", ["Boxplot", "Moving Average", "Moving Median"])
-                intervalo_plot = col2.number_input("Age interval size (years):", min_value=1, max_value=20, value=5, step=1)
+                col_chart1, col_chart2 = st.columns(2)
+                chart_type = col_chart1.selectbox("Chart Type:", ["Boxplot", "Moving Average", "Moving Median"])
+                intervalo_plot = col_chart2.number_input("Age interval size (years):", min_value=1, max_value=20, value=5, step=1)
                 
-                if col3.button("Generate Chart", type="primary", use_container_width=True):
+                group_by_sex = False
+                selected_sexes_for_plot = []
+                
+                if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
+                    st.markdown("##### Sex/Gender Filtering & Grouping")
+                    col_g1, col_g2 = st.columns([1, 2])
+                    group_by_sex = col_g1.checkbox("Group Chart by Sex/Gender", value=False)
+                    
+                    sex_options_for_plot = [v for v in sex_column_values if v]
+                    selected_sexes_for_plot = col_g2.multiselect(
+                        "Filter by Sex/Gender (Leave empty for all):", 
+                        options=sex_options_for_plot, 
+                        default=sex_options_for_plot
+                    )
+                    if not selected_sexes_for_plot:
+                         selected_sexes_for_plot = sex_options_for_plot
+                else:
+                    st.info("💡 Tip: Select a Sex/Gender column in Global Settings to enable gender grouping.")
+
+                if st.button("Generate Chart", type="primary", use_container_width=True):
                     with st.spinner("Drawing chart..."):
-                        fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, intervalo_plot, chart_type)
+                        fig = plot_dispersion_chart(
+                            df, 
+                            st.session_state.col_idade, 
+                            st.session_state.col_dados, 
+                            st.session_state.col_sexo,
+                            intervalo_plot, 
+                            chart_type,
+                            group_by_sex,
+                            selected_sexes_for_plot
+                        )
                         if fig:
                             st.pyplot(fig)
                         else:
-                            st.warning("Not enough valid data in the selected column to generate the chart.")
+                            st.warning("Not enough valid data in the selected columns to generate the chart.")
             else:
                 st.info("⚠️ Select the Age column and Data column in global settings to enable the chart.")
         else:
