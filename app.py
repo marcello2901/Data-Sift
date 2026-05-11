@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.6.1 - Correção: Sintaxe do Seaborn Boxplot
-# Melhorias: Adicionado recurso para filtrar quais sexos o gráfico exibirá e opção de agrupamento (sobreposição) com cores distintas.
+# Versão 2.6.2 - Correção: Robustez do Motor de Estratificação
+# Melhorias: Isolamento de conexão do DuckDB para evitar conflitos de variáveis globais e correção do comportamento de unificação quando nenhum sexo é selecionado.
 
 import streamlit as st
 import pandas as pd
@@ -140,6 +140,7 @@ class DataProcessor:
     OPERATOR_MAP = {'=': '=', '==': '=', 'Não é igual a': '!=', '≥': '>=', '≤': '<=', 'is equal to': '=', 'Not equal to': '!='}
 
     def _build_single_sql_cond(self, col: str, op: str, val: Any) -> str:
+        if not op: return "FALSE" # Prevenção de erro de sintaxe SQL
         op = self.OPERATOR_MAP.get(op, op)
 
         if str(val).lower() == 'empty':
@@ -201,12 +202,12 @@ class DataProcessor:
 
         return " AND ".join(conds) if conds else "TRUE"
 
-    def apply_filters(self, df: pd.DataFrame, filters_config: List[Dict], global_config: Dict, progress_bar) -> pd.DataFrame:
+    def apply_filters(self, df_input: pd.DataFrame, filters_config: List[Dict], global_config: Dict, progress_bar) -> pd.DataFrame:
         active_filters = [f for f in filters_config if f['p_check']]
         
         if not active_filters:
             progress_bar.progress(1.0, text="No active filter rules.")
-            return df
+            return df_input
 
         exclusion_clauses = []
         
@@ -220,7 +221,7 @@ class DataProcessor:
 
             main_conds = []
             for sub_col in cols_to_check:
-                if sub_col in df.columns:
+                if sub_col in df_input.columns:
                     main_conds.append(self._create_main_sql(f_config, sub_col))
                 else:
                     main_conds.append("FALSE")
@@ -233,44 +234,49 @@ class DataProcessor:
 
         if not exclusion_clauses:
             progress_bar.progress(1.0, text="Processing complete!")
-            return df
+            return df_input
 
         where_clause = " AND ".join(exclusion_clauses)
         
-        df['_temp_row_id'] = range(len(df))
-        query = f"SELECT _temp_row_id FROM df WHERE {where_clause}"
+        local_df = df_input.copy()
+        local_df['_temp_row_id'] = range(len(local_df))
+        
+        con = duckdb.connect()
+        con.register('local_df', local_df)
+        query = f"SELECT _temp_row_id FROM local_df WHERE {where_clause}"
 
         try:
             progress_bar.progress(0.8, text="Executing DuckDB Engine (SQL)...")
-            valid_ids_df = duckdb.query(query).df()
+            valid_ids_df = con.execute(query).df()
             
-            filtered_df = df[df['_temp_row_id'].isin(valid_ids_df['_temp_row_id'])].copy()
-            
+            filtered_df = local_df[local_df['_temp_row_id'].isin(valid_ids_df['_temp_row_id'])].copy()
             filtered_df.drop(columns=['_temp_row_id'], inplace=True)
-            df.drop(columns=['_temp_row_id'], inplace=True)
             
+            con.close()
             progress_bar.progress(1.0, text="Filtering complete!")
             return filtered_df
         except Exception as e:
-            st.error(f"SQL Processing Error: {e}")
-            if '_temp_row_id' in df.columns:
-                df.drop(columns=['_temp_row_id'], inplace=True)
-            return df
+            con.close()
+            st.session_state.filter_error = f"SQL Processing Error: {e}"
+            return df_input
     
-    def apply_stratification(self, df: pd.DataFrame, strata_config: Dict, global_config: Dict, progress_bar) -> Dict[str, pd.DataFrame]:
+    def apply_stratification(self, df_input: pd.DataFrame, strata_config: Dict, global_config: Dict, progress_bar) -> Dict[str, pd.DataFrame]:
         col_idade = global_config.get('coluna_idade')
         col_sexo = global_config.get('coluna_sexo')
 
-        if not (col_idade and col_idade in df.columns):
-            st.error(f"Age column '{col_idade}' not found in the spreadsheet."); return {}
-        if not (col_sexo and col_sexo in df.columns):
-            st.error(f"Sex/gender column '{col_sexo}' not found in the spreadsheet."); return {}
-
-        safe_idade = f'"{col_idade}"'
-        safe_sexo = f'"{col_sexo}"'
-
         age_strata = strata_config.get('ages', [])
         sex_strata = strata_config.get('sexes', [])
+
+        # Só exige validação das colunas se o usuário tentou criar uma regra usando elas
+        if age_strata and not (col_idade and col_idade in df_input.columns):
+            st.session_state.stratification_error = f"Age column '{col_idade}' not found or not mapped in Global Settings."
+            return {}
+        if sex_strata and not (col_sexo and col_sexo in df_input.columns):
+            st.session_state.stratification_error = f"Sex/Gender column '{col_sexo}' not found or not mapped in Global Settings."
+            return {}
+
+        safe_idade = f'"{col_idade}"' if col_idade else ""
+        safe_sexo = f'"{col_sexo}"' if col_sexo else ""
 
         final_strata_to_process = []
         if not age_strata and sex_strata:
@@ -285,7 +291,11 @@ class DataProcessor:
         total_files = len(final_strata_to_process)
         generated_dfs = {}
 
-        df['_temp_row_id'] = range(len(df))
+        local_df = df_input.copy()
+        local_df['_temp_row_id'] = range(len(local_df))
+        
+        con = duckdb.connect()
+        con.register('local_df', local_df)
 
         for i, stratum in enumerate(final_strata_to_process):
             progress = (i + 1) / total_files
@@ -303,21 +313,21 @@ class DataProcessor:
                 conditions.append(self._build_single_sql_cond(safe_sexo, '=', sex_rule['value']))
 
             where_clause = " AND ".join([f"({c})" for c in conditions]) if conditions else "TRUE"
-            query = f"SELECT _temp_row_id FROM df WHERE {where_clause}"
+            query = f"SELECT _temp_row_id FROM local_df WHERE {where_clause}"
 
             filename = self._generate_stratum_name(age_rule, sex_rule)
             progress_bar.progress(progress, text=f"Generating stratum {i+1}/{total_files}: {filename}...")
             
             try:
-                valid_ids_df = duckdb.query(query).df()
+                valid_ids_df = con.execute(query).df()
                 if not valid_ids_df.empty:
-                    stratum_df = df[df['_temp_row_id'].isin(valid_ids_df['_temp_row_id'])].copy()
+                    stratum_df = local_df[local_df['_temp_row_id'].isin(valid_ids_df['_temp_row_id'])].copy()
                     stratum_df.drop(columns=['_temp_row_id'], inplace=True)
                     generated_dfs[filename] = stratum_df
             except Exception as e:
-                st.warning(f"Could not generate stratum {filename} due to an error in values: {e}")
+                st.session_state.stratification_error = f"SQL error while generating {filename}: {e}"
 
-        df.drop(columns=['_temp_row_id'], inplace=True)
+        con.close()
         progress_bar.progress(1.0, text="Stratification complete!")
         return generated_dfs
 
@@ -360,7 +370,10 @@ class DataProcessor:
         if sex_rule:
             sex_name = str(sex_rule.get('value', '')).replace(' ', '_')
             if sex_name: name_parts.append(sex_name)
-        return "_".join(part for part in name_parts if part)
+        
+        # Garante que um nome será gerado se os loops estiverem incompletos
+        final_name = "_".join(part for part in name_parts if part)
+        return final_name if final_name else "Group_All"
 
 # --- FUNÇÕES AUXILIARES OTIMIZADAS ---
 
@@ -564,7 +577,7 @@ def run_harris_boyd(df, col_idade, col_dados):
         texto_laudo += f"**{i+1}. Group {faixa} (Approx. Mean: {m1:.1f})**\n"
         texto_laudo += "🔹 *Why separate?* "
         if cut['justificativa'] == 'Mean':
-            texto_laudo += f"There is a significant change in mean results compared to the rest of the population (jump to {m2:.1f}). "
+            texto_laudo += f"In this life stage, there is a significant change in mean results compared to the rest of the population (jump to {m2:.1f}). "
         elif cut['justificativa'] == 'Standard Deviation':
             texto_laudo += "This age group presents a very different variability (data dispersion) compared to other ages. "
         else:
@@ -618,17 +631,14 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     temp_df = temp_df.dropna(subset=['Idade', 'Data'])
     temp_df = temp_df[temp_df['Idade'] >= 0]
     
-    # Filter dataset by selected sexes if applicable
     if 'Sexo' in temp_df.columns and selected_sexes:
         temp_df = temp_df[temp_df['Sexo'].isin(selected_sexes)]
         
     if temp_df.empty: return None
 
-    # Logic to group ages into bins and format labels correctly to avoid alphabetical sorting issues
     if intervalo > 1:
         temp_df['Idade_Bin'] = (temp_df['Idade'] // intervalo) * intervalo
         temp_df['Idade_Label'] = temp_df['Idade_Bin'].astype(int).astype(str) + " to " + (temp_df['Idade_Bin'] + intervalo - 1).astype(int).astype(str)
-        # Ensure categorical sorting based on the numeric bin value
         categories = temp_df.drop_duplicates('Idade_Bin').sort_values('Idade_Bin')['Idade_Label'].tolist()
         temp_df['Idade_Label'] = pd.Categorical(temp_df['Idade_Label'], categories=categories, ordered=True)
         x_col = 'Idade_Label'
@@ -642,7 +652,6 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     hue_col = 'Sexo' if group_by_sex and 'Sexo' in temp_df.columns else None
     
     if chart_type == 'Boxplot':
-        # Correção da Sintaxe: Parâmetros condicionados corretamente
         if hue_col:
             sns.boxplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2', ax=ax, showfliers=False)
         else:
@@ -908,6 +917,11 @@ def main():
 
     with tab_filter:
         st.header("Exclusion Rules")
+        
+        if st.session_state.get('filter_error'):
+            st.error(st.session_state.filter_error)
+            del st.session_state['filter_error']
+            
         draw_filter_rules(sex_column_values, column_options)
         if st.button("Add New Filter Rule"):
             st.session_state.filter_rules.append({'id': str(uuid.uuid4()), 'p_check': True, 'p_col': '', 'p_op1': '<', 'p_val1': '', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''})
@@ -933,6 +947,11 @@ def main():
 
     with tab_stratify:
         st.header("Harris-Boyd Study (Stratification Suggestion)")
+        
+        if st.session_state.get('stratification_error'):
+            st.error(st.session_state.stratification_error)
+            del st.session_state['stratification_error']
+            
         if df is not None:
             if not st.session_state.col_idade or not st.session_state.col_dados:
                 st.info("⚠️ To view the Harris-Boyd study, make sure to fill in the **'Age Column'** and **'Data Column (Harris-Boyd)'** in the **Global Settings** section.")
@@ -1026,7 +1045,7 @@ def main():
                         processor = get_data_processor()
                         age_rules = [r for r in st.session_state.stratum_rules if r.get('val1')]
                         sex_rules = [{'value': gender_val, 'name': str(gender_val)} for gender_val, is_selected in st.session_state.get('strat_gender_selection', {}).items() if is_selected]
-                        st.session_state.stratified_results = processor.apply_stratification(df.copy(), {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
+                        st.session_state.stratified_results = processor.apply_stratification(df, {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
                 st.session_state.confirm_stratify = False
                 st.rerun()
             if c2.button("No, cancel"):
