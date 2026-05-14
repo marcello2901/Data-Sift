@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.7.0 - Atualização: Filtro e Agrupamento por Sexo no Estudo de Harris-Boyd
-# Melhorias: Adicionado recurso para filtrar e executar análises de Harris-Boyd separadas por sexo.
+# Versão 2.7.2 - Correção: Exibição Forçada de Rótulos no Eixo X (Boxplot/Dispersion)
+# Melhorias: Conversão dinâmica do eixo X para categórico, forçando a exibição de todas as idades ou intervalos sem pular valores, com ajuste inteligente de rotação e fonte.
 
 import streamlit as st
 import pandas as pd
@@ -634,15 +634,24 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
         
     if temp_df.empty: return None
 
+    # Nova Lógica: Eixo X categorizado com todos os valores para não pular dados
+    min_age = int(temp_df['Idade'].min())
+    max_age = int(temp_df['Idade'].max())
+
     if intervalo > 1:
+        min_bin = (min_age // intervalo) * intervalo
+        max_bin = (max_age // intervalo) * intervalo
+        
         temp_df['Idade_Bin'] = (temp_df['Idade'] // intervalo) * intervalo
         temp_df['Idade_Label'] = temp_df['Idade_Bin'].astype(int).astype(str) + " to " + (temp_df['Idade_Bin'] + intervalo - 1).astype(int).astype(str)
-        categories = temp_df.drop_duplicates('Idade_Bin').sort_values('Idade_Bin')['Idade_Label'].tolist()
+        
+        categories = [f"{b} to {b + intervalo - 1}" for b in range(min_bin, max_bin + 1, int(intervalo))]
         temp_df['Idade_Label'] = pd.Categorical(temp_df['Idade_Label'], categories=categories, ordered=True)
         x_col = 'Idade_Label'
     else:
-        temp_df['Idade_Label'] = temp_df['Idade'].astype(int)
-        temp_df = temp_df.sort_values('Idade_Label')
+        temp_df['Idade_Label'] = temp_df['Idade'].astype(int).astype(str)
+        categories = [str(age) for age in range(min_age, max_age + 1)]
+        temp_df['Idade_Label'] = pd.Categorical(temp_df['Idade_Label'], categories=categories, ordered=True)
         x_col = 'Idade_Label'
 
     fig, ax = plt.subplots(figsize=(16, 6))
@@ -672,7 +681,16 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     
     ax.set_title(f'Distribution of {col_dados} by Age ({chart_type})', fontsize=16, fontweight='bold', pad=15)
     ax.set_xlabel('Age (Years)', fontsize=14, labelpad=10)
-    plt.xticks(rotation=45, ha='right')
+    
+    # Força todos os ticks categóricos a aparecerem sem pular
+    ax.set_xticks(range(len(categories)))
+    
+    # Inteligência para rotacionar e diminuir a fonte caso haja muitas categorias no eixo
+    if len(categories) > 30:
+        ax.set_xticklabels(categories, rotation=90, ha='center', fontsize=8 if len(categories) > 40 else 10)
+    else:
+        ax.set_xticklabels(categories, rotation=45, ha='right', fontsize=10)
+        
     plt.grid(axis='y', linestyle='--', alpha=0.5)
     
     if hue_col:
@@ -954,7 +972,6 @@ def main():
             if not st.session_state.col_idade or not st.session_state.col_dados:
                 st.info("⚠️ To view the Harris-Boyd study, make sure to fill in the **'Age Column'** and **'Data Column (Harris-Boyd)'** in the **Global Settings** section.")
             else:
-                # --- NOVO BLOCO: Filtro de Sexo para o Harris-Boyd ---
                 group_hb_by_sex = False
                 selected_sexes_for_hb = []
                 
@@ -1046,54 +1063,55 @@ def main():
                             st.warning("Not enough valid data in the selected columns to generate the chart.")
             else:
                 st.info("⚠️ Select the Age column and Data column in global settings to enable the chart.")
+
+            st.markdown("---")
+            st.header("Stratification Options")
+            
+            if st.session_state.sex_column_is_valid and sex_column_values:
+                if 'strat_gender_selection' not in st.session_state: st.session_state.strat_gender_selection = {val: True for val in sex_column_values if val}
+                cols = st.columns(min(len(sex_column_values), 5))
+                col_idx = 0
+                for gender_val in sex_column_values:
+                    if not gender_val: continue
+                    st.session_state.strat_gender_selection[gender_val] = cols[col_idx].checkbox(str(gender_val), value=st.session_state.strat_gender_selection.get(gender_val, True), key=f"strat_check_{gender_val}")
+                    col_idx = (col_idx + 1) % len(cols)
+
+            st.header("Age Range Definitions")
+            draw_stratum_rules()
+            if st.button("Add Age Range"):
+                st.session_state.stratum_rules.append({'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''})
+                st.rerun()
+            
+            if st.button("Generate Stratified Sheets", type="primary", use_container_width=True, disabled=not is_ready_for_processing):
+                st.session_state.confirm_stratify = True
+                st.rerun()
+
+            if st.session_state.get('confirm_stratify', False):
+                st.warning("Do you confirm this is the FILTERED version?")
+                c1, c2 = st.columns(2)
+                if c1.button("Yes, continue"):
+                    if df is not None:
+                        with st.spinner("Generating strata..."):
+                            progress_bar = st.progress(0, text="Initializing...")
+                            processor = get_data_processor()
+                            age_rules = [r for r in st.session_state.stratum_rules if r.get('val1')]
+                            sex_rules = [{'value': gender_val, 'name': str(gender_val)} for gender_val, is_selected in st.session_state.get('strat_gender_selection', {}).items() if is_selected]
+                            st.session_state.stratified_results = processor.apply_stratification(df.copy(), {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
+                    st.session_state.confirm_stratify = False
+                    st.rerun()
+                if c2.button("No, cancel"):
+                    st.session_state.confirm_stratify = False
+                    st.rerun()
+
+            if st.session_state.get('stratified_results'):
+                st.markdown("---"); st.subheader(f"Files ({len(st.session_state.stratified_results)} generated)")
+                is_excel = "Excel" in st.session_state.output_format
+                for filename, df_to_download in st.session_state.stratified_results.items():
+                    file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
+                    st.download_button(f"Download {filename}", data=file_bytes, file_name=f"{filename}.{'xlsx' if is_excel else 'csv'}", key=f"dl_{filename}")
+
         else:
             st.info("⚠️ Upload a spreadsheet in 'Global Settings' to use this function.")
-        
-        st.markdown("---")
-
-        st.header("Stratification Options")
-        if st.session_state.sex_column_is_valid and sex_column_values:
-            if 'strat_gender_selection' not in st.session_state: st.session_state.strat_gender_selection = {val: True for val in sex_column_values if val}
-            cols = st.columns(min(len(sex_column_values), 5))
-            col_idx = 0
-            for gender_val in sex_column_values:
-                if not gender_val: continue
-                st.session_state.strat_gender_selection[gender_val] = cols[col_idx].checkbox(str(gender_val), value=st.session_state.strat_gender_selection.get(gender_val, True), key=f"strat_check_{gender_val}")
-                col_idx = (col_idx + 1) % len(cols)
-
-        st.header("Age Range Definitions")
-        draw_stratum_rules()
-        if st.button("Add Age Range"):
-            st.session_state.stratum_rules.append({'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''})
-            st.rerun()
-        
-        if st.button("Generate Stratified Sheets", type="primary", use_container_width=True, disabled=not is_ready_for_processing):
-            st.session_state.confirm_stratify = True
-            st.rerun()
-
-        if st.session_state.get('confirm_stratify', False):
-            st.warning("Do you confirm this is the FILTERED version?")
-            c1, c2 = st.columns(2)
-            if c1.button("Yes, continue"):
-                if df is not None:
-                    with st.spinner("Generating strata..."):
-                        progress_bar = st.progress(0, text="Initializing...")
-                        processor = get_data_processor()
-                        age_rules = [r for r in st.session_state.stratum_rules if r.get('val1')]
-                        sex_rules = [{'value': gender_val, 'name': str(gender_val)} for gender_val, is_selected in st.session_state.get('strat_gender_selection', {}).items() if is_selected]
-                        st.session_state.stratified_results = processor.apply_stratification(df.copy(), {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
-                st.session_state.confirm_stratify = False
-                st.rerun()
-            if c2.button("No, cancel"):
-                st.session_state.confirm_stratify = False
-                st.rerun()
-
-        if st.session_state.get('stratified_results'):
-            st.markdown("---"); st.subheader(f"Files ({len(st.session_state.stratified_results)} generated)")
-            is_excel = "Excel" in st.session_state.output_format
-            for filename, df_to_download in st.session_state.stratified_results.items():
-                file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
-                st.download_button(f"Download {filename}", data=file_bytes, file_name=f"{filename}.{'xlsx' if is_excel else 'csv'}", key=f"dl_{filename}")
 
 if __name__ == "__main__":
     main()
