@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.6.2 - Correção: Robustez do Motor de Estratificação
-# Melhorias: Isolamento de conexão do DuckDB para evitar conflitos de variáveis globais e correção do comportamento de unificação quando nenhum sexo é selecionado.
+# Versão 2.7.0 - Atualização: Filtro e Agrupamento por Sexo no Estudo de Harris-Boyd
+# Melhorias: Adicionado recurso para filtrar e executar análises de Harris-Boyd separadas por sexo.
 
 import streamlit as st
 import pandas as pd
@@ -140,7 +140,7 @@ class DataProcessor:
     OPERATOR_MAP = {'=': '=', '==': '=', 'Não é igual a': '!=', '≥': '>=', '≤': '<=', 'is equal to': '=', 'Not equal to': '!='}
 
     def _build_single_sql_cond(self, col: str, op: str, val: Any) -> str:
-        if not op: return "FALSE" # Prevenção de erro de sintaxe SQL
+        if not op: return "FALSE"
         op = self.OPERATOR_MAP.get(op, op)
 
         if str(val).lower() == 'empty':
@@ -267,7 +267,6 @@ class DataProcessor:
         age_strata = strata_config.get('ages', [])
         sex_strata = strata_config.get('sexes', [])
 
-        # Só exige validação das colunas se o usuário tentou criar uma regra usando elas
         if age_strata and not (col_idade and col_idade in df_input.columns):
             st.session_state.stratification_error = f"Age column '{col_idade}' not found or not mapped in Global Settings."
             return {}
@@ -371,7 +370,6 @@ class DataProcessor:
             sex_name = str(sex_rule.get('value', '')).replace(' ', '_')
             if sex_name: name_parts.append(sex_name)
         
-        # Garante que um nome será gerado se os loops estiverem incompletos
         final_name = "_".join(part for part in name_parts if part)
         return final_name if final_name else "Group_All"
 
@@ -956,13 +954,50 @@ def main():
             if not st.session_state.col_idade or not st.session_state.col_dados:
                 st.info("⚠️ To view the Harris-Boyd study, make sure to fill in the **'Age Column'** and **'Data Column (Harris-Boyd)'** in the **Global Settings** section.")
             else:
-                with st.spinner("Calculating and generating interpretative report..."):
-                    texto_interpretativo, raw_df = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
-                    st.markdown(texto_interpretativo)
+                # --- NOVO BLOCO: Filtro de Sexo para o Harris-Boyd ---
+                group_hb_by_sex = False
+                selected_sexes_for_hb = []
+                
+                if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
+                    st.markdown("##### Sex/Gender Filtering & Grouping for Analysis")
+                    col_hb1, col_hb2 = st.columns([1, 2])
+                    group_hb_by_sex = col_hb1.checkbox("Group Analysis by Sex/Gender", value=False, key="hb_group_sex")
                     
-                    if not raw_df.empty:
-                        with st.expander("View full statistical data (Advanced Mode)"):
-                            st.dataframe(raw_df, use_container_width=True, hide_index=True)
+                    sex_options_for_hb = [v for v in sex_column_values if v]
+                    selected_sexes_for_hb = col_hb2.multiselect(
+                        "Filter by Sex/Gender (Leave empty for all):", 
+                        options=sex_options_for_hb, 
+                        default=sex_options_for_hb,
+                        key="hb_filter_sex"
+                    )
+                    if not selected_sexes_for_hb:
+                         selected_sexes_for_hb = sex_options_for_hb
+                else:
+                    st.info("💡 Tip: Select a Sex/Gender column in Global Settings to enable gender grouping for the analysis.")
+
+                with st.spinner("Calculating and generating interpretative report..."):
+                    if group_hb_by_sex:
+                        for sex in selected_sexes_for_hb:
+                            st.markdown(f"#### 🧬 Analysis for: {sex}")
+                            filtered_df = df[df[st.session_state.col_sexo] == sex]
+                            texto_interpretativo, raw_df = run_harris_boyd(filtered_df, st.session_state.col_idade, st.session_state.col_dados)
+                            st.markdown(texto_interpretativo)
+                            
+                            if not raw_df.empty:
+                                with st.expander(f"View full statistical data for {sex} (Advanced Mode)"):
+                                    st.dataframe(raw_df, use_container_width=True, hide_index=True)
+                            st.markdown("---")
+                    else:
+                        filtered_df = df.copy()
+                        if st.session_state.col_sexo and selected_sexes_for_hb:
+                            filtered_df = filtered_df[filtered_df[st.session_state.col_sexo].isin(selected_sexes_for_hb)]
+                            
+                        texto_interpretativo, raw_df = run_harris_boyd(filtered_df, st.session_state.col_idade, st.session_state.col_dados)
+                        st.markdown(texto_interpretativo)
+                        
+                        if not raw_df.empty:
+                            with st.expander("View full statistical data (Advanced Mode)"):
+                                st.dataframe(raw_df, use_container_width=True, hide_index=True)
                             
             st.markdown("---")
             st.header("📊 Visual Dispersion Analysis")
@@ -973,19 +1008,20 @@ def main():
                 chart_type = col_chart1.selectbox("Chart Type:", ["Boxplot", "Moving Average", "Moving Median"])
                 intervalo_plot = col_chart2.number_input("Age interval size (years):", min_value=1, max_value=20, value=5, step=1)
                 
-                group_by_sex = False
+                group_by_sex_plot = False
                 selected_sexes_for_plot = []
                 
                 if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
-                    st.markdown("##### Sex/Gender Filtering & Grouping")
+                    st.markdown("##### Sex/Gender Filtering & Grouping for Chart")
                     col_g1, col_g2 = st.columns([1, 2])
-                    group_by_sex = col_g1.checkbox("Group Chart by Sex/Gender", value=False)
+                    group_by_sex_plot = col_g1.checkbox("Group Chart by Sex/Gender", value=False, key="plot_group_sex")
                     
                     sex_options_for_plot = [v for v in sex_column_values if v]
                     selected_sexes_for_plot = col_g2.multiselect(
                         "Filter by Sex/Gender (Leave empty for all):", 
                         options=sex_options_for_plot, 
-                        default=sex_options_for_plot
+                        default=sex_options_for_plot,
+                        key="plot_filter_sex"
                     )
                     if not selected_sexes_for_plot:
                          selected_sexes_for_plot = sex_options_for_plot
@@ -1001,7 +1037,7 @@ def main():
                             st.session_state.col_sexo,
                             intervalo_plot, 
                             chart_type,
-                            group_by_sex,
+                            group_by_sex_plot,
                             selected_sexes_for_plot
                         )
                         if fig:
@@ -1045,7 +1081,7 @@ def main():
                         processor = get_data_processor()
                         age_rules = [r for r in st.session_state.stratum_rules if r.get('val1')]
                         sex_rules = [{'value': gender_val, 'name': str(gender_val)} for gender_val, is_selected in st.session_state.get('strat_gender_selection', {}).items() if is_selected]
-                        st.session_state.stratified_results = processor.apply_stratification(df, {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
+                        st.session_state.stratified_results = processor.apply_stratification(df.copy(), {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
                 st.session_state.confirm_stratify = False
                 st.rerun()
             if c2.button("No, cancel"):
