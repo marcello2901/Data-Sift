@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.7.2 - Correção: Exibição Forçada de Rótulos no Eixo X (Boxplot/Dispersion)
-# Melhorias: Conversão dinâmica do eixo X para categórico, forçando a exibição de todas as idades ou intervalos sem pular valores, com ajuste inteligente de rotação e fonte.
+# Versão 2.8.0 - Atualização: Linhas de Tendência de Patamar (Plateau Lines)
+# Melhorias: Adicionado recurso inteligente que plota linhas horizontais (degraus) indicando os centros geométricos baseados nos cortes do Harris-Boyd sobre os gráficos de dispersão.
 
 import streamlit as st
 import pandas as pd
@@ -458,11 +458,11 @@ def run_harris_boyd(df, col_idade, col_dados):
     temp_df = temp_df[temp_df['Idade'] >= 0]
     
     if temp_df.empty:
-        return "No stratification recommended (Insufficient data).", pd.DataFrame()
+        return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
         
     max_age = int(temp_df['Idade'].max())
     if max_age < 1:
-        return "No stratification recommended (Insufficient age variation).", pd.DataFrame()
+        return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
         
     valid_cuts = []
     
@@ -511,7 +511,7 @@ def run_harris_boyd(df, col_idade, col_dados):
             })
             
     if not valid_cuts:
-         return "The statistical model found no clinical necessity or sufficient variance to recommend age-based reference intervals for this analyte.", pd.DataFrame()
+         return "The statistical model found no clinical necessity or sufficient variance to recommend age-based reference intervals for this analyte.", pd.DataFrame(), []
 
     valid_cuts = sorted(valid_cuts, key=lambda x: x['age'])
 
@@ -604,11 +604,10 @@ def run_harris_boyd(df, col_idade, col_dados):
 
     raw_df = pd.DataFrame(raw_data_list)
     
-    return texto_laudo, raw_df
+    return texto_laudo, raw_df, idades_sugeridas
 
 @st.cache_data(show_spinner=False)
-def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_type, group_by_sex, selected_sexes):
-    """Generates an interactive dispersion chart grouped by age bins and optionally by sex."""
+def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_type, group_by_sex, selected_sexes, show_trendlines):
     temp_df = pd.DataFrame()
     temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
     
@@ -634,7 +633,6 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
         
     if temp_df.empty: return None
 
-    # Nova Lógica: Eixo X categorizado com todos os valores para não pular dados
     min_age = int(temp_df['Idade'].min())
     max_age = int(temp_df['Idade'].max())
 
@@ -665,27 +663,51 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
             sns.boxplot(data=temp_df, x=x_col, y='Data', color='#a2cffe', ax=ax, showfliers=False)
         ax.set_ylabel('Results (Without Extreme Outliers)', fontsize=14, labelpad=10)
     
-    elif chart_type == 'Moving Average':
+    elif chart_type in ['Moving Average', 'Moving Median']:
+        metric_func = np.mean if chart_type == 'Moving Average' else np.median
         if hue_col:
-            sns.lineplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2', marker='o', errorbar=None, ax=ax, linewidth=2, markersize=8)
+            sns.lineplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2', estimator=metric_func, marker='o', errorbar=None, ax=ax, linewidth=2, markersize=8)
         else:
-            sns.lineplot(data=temp_df, x=x_col, y='Data', marker='o', color='#ff6666', errorbar=None, ax=ax, linewidth=2, markersize=8)
-        ax.set_ylabel('Mean Results', fontsize=14, labelpad=10)
-    
-    elif chart_type == 'Moving Median':
-        if hue_col:
-            sns.lineplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2', estimator=np.median, marker='s', errorbar=None, ax=ax, linewidth=2, markersize=8)
-        else:
-            sns.lineplot(data=temp_df, x=x_col, y='Data', estimator=np.median, marker='s', color='#2ca02c', errorbar=None, ax=ax, linewidth=2, markersize=8)
-        ax.set_ylabel('Median Results', fontsize=14, labelpad=10)
-    
+            sns.lineplot(data=temp_df, x=x_col, y='Data', estimator=metric_func, marker='o', color='#ff6666' if chart_type == 'Moving Average' else '#2ca02c', errorbar=None, ax=ax, linewidth=2, markersize=8)
+        ax.set_ylabel(f'{chart_type} Results', fontsize=14, labelpad=10)
+
+        # Desenhar Linhas de Patamar (Plateaus)
+        if show_trendlines:
+            metric_str = 'mean' if chart_type == 'Moving Average' else 'median'
+            
+            def draw_segments(df_sub, color):
+                _, _, cuts = run_harris_boyd(df_sub, 'Idade', 'Data')
+                starts = [0] + [c + 1 for c in cuts]
+                ends = cuts + [999]
+                
+                for s, e in zip(starts, ends):
+                    mask = (df_sub['Idade'] >= s) & (df_sub['Idade'] <= e)
+                    if mask.sum() == 0: continue
+                    
+                    seg_data = df_sub[mask]['Data']
+                    val = seg_data.mean() if metric_str == 'mean' else seg_data.median()
+                    
+                    seg_labels = df_sub[mask]['Idade_Label'].unique()
+                    x_positions = [categories.index(lbl) for lbl in seg_labels if lbl in categories]
+                    
+                    if not x_positions: continue
+                    x_min = min(x_positions) - 0.4
+                    x_max = max(x_positions) + 0.4
+                    
+                    ax.hlines(y=val, xmin=x_min, xmax=x_max, color=color, linestyle='--', linewidth=2.5, alpha=0.8, zorder=10)
+
+            if hue_col:
+                palette = sns.color_palette('Set2', n_colors=temp_df[hue_col].nunique())
+                for i, sex_val in enumerate(temp_df[hue_col].dropna().unique()):
+                    df_sub = temp_df[temp_df[hue_col] == sex_val]
+                    draw_segments(df_sub, palette[i])
+            else:
+                draw_segments(temp_df, 'black')
+
     ax.set_title(f'Distribution of {col_dados} by Age ({chart_type})', fontsize=16, fontweight='bold', pad=15)
     ax.set_xlabel('Age (Years)', fontsize=14, labelpad=10)
     
-    # Força todos os ticks categóricos a aparecerem sem pular
     ax.set_xticks(range(len(categories)))
-    
-    # Inteligência para rotacionar e diminuir a fonte caso haja muitas categorias no eixo
     if len(categories) > 30:
         ax.set_xticklabels(categories, rotation=90, ha='center', fontsize=8 if len(categories) > 40 else 10)
     else:
@@ -997,7 +1019,7 @@ def main():
                         for sex in selected_sexes_for_hb:
                             st.markdown(f"#### 🧬 Analysis for: {sex}")
                             filtered_df = df[df[st.session_state.col_sexo] == sex]
-                            texto_interpretativo, raw_df = run_harris_boyd(filtered_df, st.session_state.col_idade, st.session_state.col_dados)
+                            texto_interpretativo, raw_df, _ = run_harris_boyd(filtered_df, st.session_state.col_idade, st.session_state.col_dados)
                             st.markdown(texto_interpretativo)
                             
                             if not raw_df.empty:
@@ -1009,7 +1031,7 @@ def main():
                         if st.session_state.col_sexo and selected_sexes_for_hb:
                             filtered_df = filtered_df[filtered_df[st.session_state.col_sexo].isin(selected_sexes_for_hb)]
                             
-                        texto_interpretativo, raw_df = run_harris_boyd(filtered_df, st.session_state.col_idade, st.session_state.col_dados)
+                        texto_interpretativo, raw_df, _ = run_harris_boyd(filtered_df, st.session_state.col_idade, st.session_state.col_dados)
                         st.markdown(texto_interpretativo)
                         
                         if not raw_df.empty:
@@ -1025,6 +1047,10 @@ def main():
                 chart_type = col_chart1.selectbox("Chart Type:", ["Boxplot", "Moving Average", "Moving Median"])
                 intervalo_plot = col_chart2.number_input("Age interval size (years):", min_value=1, max_value=20, value=5, step=1)
                 
+                show_trendlines = False
+                if chart_type in ['Moving Average', 'Moving Median']:
+                    show_trendlines = st.checkbox("Show Stratification Trend Lines (Plateaus)", value=True, help="Draws horizontal dashed lines representing the geometric center based on Harris-Boyd cuts.")
+
                 group_by_sex_plot = False
                 selected_sexes_for_plot = []
                 
@@ -1055,7 +1081,8 @@ def main():
                             intervalo_plot, 
                             chart_type,
                             group_by_sex_plot,
-                            selected_sexes_for_plot
+                            selected_sexes_for_plot,
+                            show_trendlines
                         )
                         if fig:
                             st.pyplot(fig)
