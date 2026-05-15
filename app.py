@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-# Versão 2.8.0 - Atualização: Linhas de Tendência de Patamar (Plateau Lines)
-# Melhorias: Adicionado recurso inteligente que plota linhas horizontais (degraus) indicando os centros geométricos baseados nos cortes do Harris-Boyd sobre os gráficos de dispersão.
+# Versão 2.9.0 - Atualização: Identidade Visual DataSift (Azul Petróleo e Ciano)
+# Melhorias: Inserção de Logo, tema customizado, cores dos gráficos ajustadas.
 
 import streamlit as st
 import pandas as pd
@@ -11,7 +11,7 @@ import uuid
 import copy
 import zipfile
 import duckdb
-import time # <-- ADICIONADO: Biblioteca para medir o tempo de processamento
+import time 
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
@@ -20,22 +20,94 @@ import os
 import shutil
 import matplotlib.pyplot as plt
 import seaborn as sns
+import base64
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(layout="wide", page_title="Data Sift")
-st.markdown("""
+# --- CONFIGURAÇÃO E TEMA DA PÁGINA ---
+st.set_page_config(layout="wide", page_title="DataSift", page_icon="🧬")
+
+# Paleta de Cores Baseada na Logo
+COLOR_PRIMARY = "#0c7489" # Azul Petróleo (Botões principais)
+COLOR_SECONDARY = "#51c4b5" # Ciano/Verde Água (Acentos, botões secundários)
+COLOR_BG = "#ffffff" # Fundo
+COLOR_TEXT = "#2b2b2b" # Texto
+
+# Injeção de CSS para forçar a identidade visual
+st.markdown(f"""
     <style>
-        /* Remove o esmaecimento da tela ao clicar nos filtros */
-        [data-testid="stAppViewBlockContainer"] {
+        /* Ajustes Estruturais */
+        [data-testid="stAppViewBlockContainer"] {{
             opacity: 1 !important;
             transition: none !important;
-        }
-        /* Esconde o aviso "Running..." no canto superior direito */
-        [data-testid="stStatusWidget"] {
-            visibility: hidden;
-        }
+        }}
+        [data-testid="stStatusWidget"] {{ visibility: hidden; }}
+        
+        /* Botões Primários */
+        button[kind="primary"] {{
+            background-color: {COLOR_PRIMARY} !important;
+            color: white !important;
+            border-radius: 6px !important;
+            border: none !important;
+        }}
+        button[kind="primary"]:hover {{
+            background-color: {COLOR_SECONDARY} !important;
+            border-color: {COLOR_SECONDARY} !important;
+        }}
+        
+        /* Botões Secundários */
+        button[kind="secondary"] {{
+            border-color: {COLOR_PRIMARY} !important;
+            color: {COLOR_PRIMARY} !important;
+        }}
+        button[kind="secondary"]:hover {{
+            border-color: {COLOR_SECONDARY} !important;
+            color: {COLOR_SECONDARY} !important;
+        }}
+        
+        /* Checkboxes e Toggles */
+        div[data-testid="stCheckbox"] > label > span:first-child[data-checked="true"] {{
+            background-color: {COLOR_SECONDARY} !important;
+            border-color: {COLOR_SECONDARY} !important;
+        }}
+        
+        /* Títulos */
+        h1, h2, h3 {{ color: {COLOR_PRIMARY} !important; }}
+        
+        /* Inputs e Selects do Menu de Filtros */
+        .stButton>button {{ padding: 0.25rem 0.3rem; font-size: 0.8rem; white-space: nowrap; }}
+        div[data-testid="stTextInput"] input, div[data-testid="stSelectbox"] div[data-baseweb="select"] {{
+            border: 1px solid rgba(12, 116, 137, 0.2) !important; /* Borda Azul Petróleo clara */
+            border-radius: 0.25rem;
+        }}
+        div[data-testid="stTextInput"] input:focus, div[data-testid="stSelectbox"] div[data-baseweb="select"]:focus-within {{
+            border-color: {COLOR_PRIMARY} !important;
+            box-shadow: 0 0 0 1px {COLOR_PRIMARY} !important;
+        }}
     </style>
 """, unsafe_allow_html=True)
+
+# Função para converter imagem em base64 e centralizar
+def get_base64_of_bin_file(bin_file):
+    try:
+        with open(bin_file, 'rb') as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+    except FileNotFoundError:
+        return None
+
+# Renderiza a Logo Centralizada
+logo_path = "datasift_logo.png"
+logo_base64 = get_base64_of_bin_file(logo_path)
+if logo_base64:
+    st.markdown(
+        f"""
+        <div style="display: flex; justify-content: center; margin-bottom: 2rem;">
+            <img src="data:image/png;base64,{logo_base64}" width="300">
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    st.title("DataSift") # Fallback se a imagem não estiver na pasta
 
 # --- CONSTANTES E DADOS ---
 GDPR_TERMS = """
@@ -204,7 +276,6 @@ class DataProcessor:
         return " AND ".join(conds) if conds else "TRUE"
 
     def apply_filters(self, df_input: pd.DataFrame, filters_config: List[Dict], global_config: Dict, progress_bar) -> pd.DataFrame:
-        # <-- INÍCIO DO CRONÔMETRO -->
         start_time = time.perf_counter()
         
         active_filters = [f for f in filters_config if f['p_check']]
@@ -260,7 +331,6 @@ class DataProcessor:
             
             con.close()
             
-            # <-- FIM DO CRONÔMETRO -->
             end_time = time.perf_counter()
             tempo_execucao = end_time - start_time
             
@@ -667,19 +737,24 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     
     hue_col = 'Sexo' if group_by_sex and 'Sexo' in temp_df.columns else None
     
+    # <-- PALETA DE CORES ATUALIZADA PARA O GRÁFICO -->
+    # Cores inspiradas no novo tema para manter a harmonia visual
+    palette_custom = ["#0c7489", "#51c4b5", "#a6dcef", "#2b2b2b"] 
+    single_color = "#0c7489" # Azul Petróleo
+    
     if chart_type == 'Boxplot':
         if hue_col:
-            sns.boxplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2', ax=ax, showfliers=False)
+            sns.boxplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette=palette_custom, ax=ax, showfliers=False)
         else:
-            sns.boxplot(data=temp_df, x=x_col, y='Data', color='#a2cffe', ax=ax, showfliers=False)
+            sns.boxplot(data=temp_df, x=x_col, y='Data', color=single_color, ax=ax, showfliers=False)
         ax.set_ylabel('Results (Without Extreme Outliers)', fontsize=14, labelpad=10)
     
     elif chart_type in ['Moving Average', 'Moving Median']:
         metric_func = np.mean if chart_type == 'Moving Average' else np.median
         if hue_col:
-            sns.lineplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette='Set2', estimator=metric_func, marker='o', errorbar=None, ax=ax, linewidth=2, markersize=8)
+            sns.lineplot(data=temp_df, x=x_col, y='Data', hue=hue_col, palette=palette_custom, estimator=metric_func, marker='o', errorbar=None, ax=ax, linewidth=2, markersize=8)
         else:
-            sns.lineplot(data=temp_df, x=x_col, y='Data', estimator=metric_func, marker='o', color='#ff6666' if chart_type == 'Moving Average' else '#2ca02c', errorbar=None, ax=ax, linewidth=2, markersize=8)
+            sns.lineplot(data=temp_df, x=x_col, y='Data', estimator=metric_func, marker='o', color=single_color, errorbar=None, ax=ax, linewidth=2, markersize=8)
         ax.set_ylabel(f'{chart_type} Results', fontsize=14, labelpad=10)
 
         # Desenhar Linhas de Patamar (Plateaus)
@@ -708,14 +783,14 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
                     ax.hlines(y=val, xmin=x_min, xmax=x_max, color=color, linestyle='--', linewidth=2.5, alpha=0.8, zorder=10)
 
             if hue_col:
-                palette = sns.color_palette('Set2', n_colors=temp_df[hue_col].nunique())
+                palette = sns.color_palette(palette_custom, n_colors=temp_df[hue_col].nunique())
                 for i, sex_val in enumerate(temp_df[hue_col].dropna().unique()):
                     df_sub = temp_df[temp_df[hue_col] == sex_val]
                     draw_segments(df_sub, palette[i])
             else:
-                draw_segments(temp_df, 'black')
+                draw_segments(temp_df, '#51c4b5') # Ciano claro para a linha de tendência única
 
-    ax.set_title(f'Distribution of {col_dados} by Age ({chart_type})', fontsize=16, fontweight='bold', pad=15)
+    ax.set_title(f'Distribution of {col_dados} by Age ({chart_type})', fontsize=16, fontweight='bold', pad=15, color='#0c7489')
     ax.set_xlabel('Age (Years)', fontsize=14, labelpad=10)
     
     ax.set_xticks(range(len(categories)))
@@ -724,10 +799,16 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     else:
         ax.set_xticklabels(categories, rotation=45, ha='right', fontsize=10)
         
-    plt.grid(axis='y', linestyle='--', alpha=0.5)
+    plt.grid(axis='y', linestyle='--', alpha=0.5, color='#e0e0e0')
+    
+    # Ajustar bordas do gráfico
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#2b2b2b')
+    ax.spines['bottom'].set_color('#2b2b2b')
     
     if hue_col:
-        ax.legend(title='Sex/Gender')
+        ax.legend(title='Sex/Gender', frameon=True, facecolor='white', edgecolor='#e0e0e0')
         
     plt.tight_layout()
     return fig
@@ -756,13 +837,6 @@ def reset_results_on_upload():
     st.session_state.confirm_stratify = False
 
 def draw_filter_rules(sex_column_values, column_options): 
-    st.markdown("""<style>
-        .stButton>button { padding: 0.25rem 0.3rem; font-size: 0.8rem; white-space: nowrap; }
-        div[data-testid="stTextInput"] input, div[data-testid="stSelectbox"] div[data-baseweb="select"] {
-            border: 1px solid rgba(255, 75, 75, 0.15) !important;
-            border-radius: 0.25rem;
-        }
-    </style>""", unsafe_allow_html=True)
     
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="medium")
     
@@ -789,7 +863,7 @@ def draw_filter_rules(sex_column_values, column_options):
     
     header_cols[6].markdown("**Condition**", unsafe_allow_html=True)
     header_cols[7].markdown("**Actions**", unsafe_allow_html=True)
-    st.markdown("<hr style='margin-top: -0.5rem; margin-bottom: 0.5rem;'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin-top: -0.5rem; margin-bottom: 0.5rem; border-color: rgba(12, 116, 137, 0.2);'>", unsafe_allow_html=True)
 
     ops_main = ["", ">", "<", "=", "Not equal to", "≥", "≤"]
     ops_age = ["", ">", "<", "≥", "≤", "="]
@@ -859,10 +933,9 @@ def draw_filter_rules(sex_column_values, column_options):
                             current_sex = rule.get('c_sexo_val')
                             sex_index = sex_options.index(current_sex) if current_sex in sex_options else None
                             rule['c_sexo_val'] = st.selectbox("Sex Value", options=sex_options, index=sex_index, placeholder="Select value", key=f"c_sexo_val_{rule['id']}", label_visibility="collapsed")
-        st.markdown("---")
+        st.markdown("<hr style='border-color: rgba(12, 116, 137, 0.1); margin-top: 0; margin-bottom: 1rem;'>", unsafe_allow_html=True)
 
 def draw_stratum_rules():
-    st.markdown("""<style>.stButton>button {padding: 0.25rem 0.3rem; font-size: 0.8rem;}</style>""", unsafe_allow_html=True)
     ops_stratum = ["", ">", "<", "≥", "≤"]
 
     for i, stratum_rule in enumerate(st.session_state.stratum_rules):
@@ -880,18 +953,19 @@ def draw_stratum_rules():
                     st.rerun()
                 else:
                     st.warning("Cannot delete the last age range.")
-        st.markdown("---")
+        st.markdown("<hr style='border-color: rgba(12, 116, 137, 0.1);'>", unsafe_allow_html=True)
 
 def main():
     if 'lgpd_accepted' not in st.session_state: st.session_state.lgpd_accepted = False
     if not st.session_state.lgpd_accepted:
-        st.title("Welcome to Data Sift!")
-        st.markdown("This program is designed to optimize your work with large volumes of data. Please read the terms below.")
+        # Se a logo não carregou, exibe o título em texto.
+        if not logo_base64: st.title("Welcome to DataSift!")
+        st.markdown(f"**This program is designed to optimize your work with large volumes of data.** Please read the terms below.")
         st.divider()
         st.header("Terms of Use and Data Protection Compliance")
         st.markdown(GDPR_TERMS) 
         accepted = st.checkbox("By checking this box, I confirm that the data provided is anonymized.")
-        if st.button("Continue", disabled=not accepted):
+        if st.button("Continue", type="primary", disabled=not accepted):
             st.session_state.lgpd_accepted = True
             st.rerun()
         return
@@ -905,8 +979,6 @@ def main():
         st.title("User Manual")
         topic = st.selectbox("Select a topic", list(MANUAL_CONTENT.keys()), label_visibility="collapsed")
         st.markdown(MANUAL_CONTENT[topic], unsafe_allow_html=True)
-
-    st.title("Data Sift")
 
     with st.expander("1. Global Settings", expanded=True):
         uploaded_file = st.file_uploader(
@@ -972,7 +1044,7 @@ def main():
             del st.session_state['filter_error']
             
         draw_filter_rules(sex_column_values, column_options)
-        if st.button("Add New Filter Rule"):
+        if st.button("Add New Filter Rule", type="secondary"):
             st.session_state.filter_rules.append({'id': str(uuid.uuid4()), 'p_check': True, 'p_col': '', 'p_op1': '<', 'p_val1': '', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''})
             st.rerun()
         
@@ -992,7 +1064,7 @@ def main():
                     else: st.success("No rows remaining.")
 
         if 'filtered_result' in st.session_state:
-            st.download_button("Download Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True)
+            st.download_button("Download Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True, type="primary")
 
     with tab_stratify:
         st.header("Harris-Boyd Study (Stratification Suggestion)")
@@ -1028,7 +1100,7 @@ def main():
                 with st.spinner("Calculating and generating interpretative report..."):
                     if group_hb_by_sex:
                         for sex in selected_sexes_for_hb:
-                            st.markdown(f"#### 🧬 Analysis for: {sex}")
+                            st.markdown(f"<h4 style='color: {COLOR_PRIMARY};'>🧬 Analysis for: {sex}</h4>", unsafe_allow_html=True)
                             filtered_df = df[df[st.session_state.col_sexo] == sex]
                             texto_interpretativo, raw_df, _ = run_harris_boyd(filtered_df, st.session_state.col_idade, st.session_state.col_dados)
                             st.markdown(texto_interpretativo)
@@ -1116,7 +1188,7 @@ def main():
 
             st.header("Age Range Definitions")
             draw_stratum_rules()
-            if st.button("Add Age Range"):
+            if st.button("Add Age Range", type="secondary"):
                 st.session_state.stratum_rules.append({'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''})
                 st.rerun()
             
@@ -1127,7 +1199,7 @@ def main():
             if st.session_state.get('confirm_stratify', False):
                 st.warning("Do you confirm this is the FILTERED version?")
                 c1, c2 = st.columns(2)
-                if c1.button("Yes, continue"):
+                if c1.button("Yes, continue", type="primary"):
                     if df is not None:
                         with st.spinner("Generating strata..."):
                             progress_bar = st.progress(0, text="Initializing...")
@@ -1146,7 +1218,7 @@ def main():
                 is_excel = "Excel" in st.session_state.output_format
                 for filename, df_to_download in st.session_state.stratified_results.items():
                     file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
-                    st.download_button(f"Download {filename}", data=file_bytes, file_name=f"{filename}.{'xlsx' if is_excel else 'csv'}", key=f"dl_{filename}")
+                    st.download_button(f"Download {filename}", data=file_bytes, file_name=f"{filename}.{'xlsx' if is_excel else 'csv'}", key=f"dl_{filename}", type="secondary")
 
         else:
             st.info("⚠️ Upload a spreadsheet in 'Global Settings' to use this function.")
