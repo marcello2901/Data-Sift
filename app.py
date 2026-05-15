@@ -981,7 +981,11 @@ def main():
     if 'stratum_rules' not in st.session_state: st.session_state.stratum_rules = [{'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''}]
     
     with st.sidebar:
-        st.image("datasift_logo.png", width=150) if logo_base64 else st.title("DataSift")
+        if logo_base64:
+            st.image("datasift_logo.png", width=150)
+        else:
+            st.title("DataSift")
+            
         st.markdown("---")
         topic = st.selectbox("User Manual", list(MANUAL_CONTENT.keys()))
         st.markdown(MANUAL_CONTENT[topic], unsafe_allow_html=True)
