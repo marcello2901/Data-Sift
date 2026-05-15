@@ -11,6 +11,7 @@ import uuid
 import copy
 import zipfile
 import duckdb
+import time # <-- ADICIONADO: Biblioteca para medir o tempo de processamento
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
@@ -203,10 +204,14 @@ class DataProcessor:
         return " AND ".join(conds) if conds else "TRUE"
 
     def apply_filters(self, df_input: pd.DataFrame, filters_config: List[Dict], global_config: Dict, progress_bar) -> pd.DataFrame:
+        # <-- INÍCIO DO CRONÔMETRO -->
+        start_time = time.perf_counter()
+        
         active_filters = [f for f in filters_config if f['p_check']]
         
         if not active_filters:
-            progress_bar.progress(1.0, text="No active filter rules.")
+            end_time = time.perf_counter()
+            progress_bar.progress(1.0, text=f"No active filter rules. (Time: {end_time - start_time:.4f}s)")
             return df_input
 
         exclusion_clauses = []
@@ -233,7 +238,8 @@ class DataProcessor:
             exclusion_clauses.append(f"NOT ({rule_sql})")
 
         if not exclusion_clauses:
-            progress_bar.progress(1.0, text="Processing complete!")
+            end_time = time.perf_counter()
+            progress_bar.progress(1.0, text=f"Processing complete! (Time: {end_time - start_time:.4f}s)")
             return df_input
 
         where_clause = " AND ".join(exclusion_clauses)
@@ -253,7 +259,12 @@ class DataProcessor:
             filtered_df.drop(columns=['_temp_row_id'], inplace=True)
             
             con.close()
-            progress_bar.progress(1.0, text="Filtering complete!")
+            
+            # <-- FIM DO CRONÔMETRO -->
+            end_time = time.perf_counter()
+            tempo_execucao = end_time - start_time
+            
+            progress_bar.progress(1.0, text=f"Filtering complete! Processing time: {tempo_execucao:.4f} seconds.")
             return filtered_df
         except Exception as e:
             con.close()
