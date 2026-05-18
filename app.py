@@ -825,7 +825,6 @@ def main():
         st.markdown(f'<div style="display: flex; justify-content: center; margin-top: 1rem; margin-bottom: 2rem;"><img src="data:image/png;base64,{logo_base64}" width="220"></div>', unsafe_allow_html=True)
 
     # --- CARD 1: GLOBAL SETTINGS ---
-    st.markdown('<div class="card-container">', unsafe_allow_html=True)
     with st.expander("📁 1. Global Settings (Upload Spreadsheet)", expanded=True):
         uploaded_file = st.file_uploader("Select spreadsheet", type=['csv', 'xlsx', 'xls', 'zip'], on_change=reset_results_on_upload, key="file_uploader_widget", label_visibility="collapsed")
 
@@ -870,17 +869,16 @@ def main():
                     if (numeric_ages.isna().sum() / len(age_col) if len(age_col) > 0 else 0) > 0.2:
                         st.session_state.age_column_is_valid = False
                 except KeyError: st.session_state.age_column_is_valid = False
-    st.markdown('</div>', unsafe_allow_html=True)
 
     is_ready_for_processing = st.session_state.age_column_is_valid and st.session_state.sex_column_is_valid
     
     # --- SISTEMA DE ABAS (TABS) ---
-    tab_filter, tab_stratify = st.tabs(["2. Filter Tool (LAVE)", "3. Stratification Tool"])
+    tab_filter, tab_stratify = st.tabs(["2. Filter Tool", "3. Stratification Tool"])
 
     # --- ABA 1: FILTER TOOL (LAVE) ---
     with tab_filter:
         st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-header-bar">Exclusion Filter Configuration (LAVE)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="card-header-bar">Exclusion Filter Configuration</div>', unsafe_allow_html=True)
         st.markdown('<div class="card-content-area">', unsafe_allow_html=True)
         
         if st.session_state.get('filter_error'):
