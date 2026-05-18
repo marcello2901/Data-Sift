@@ -941,15 +941,15 @@ def main():
                     if chart_type in ['Moving Average', 'Moving Median']:
                         show_trendlines = gc3.checkbox("Plateau Lines", value=True, help="Draws horizontal lines based on Harris-Boyd cuts.")
                         
-                   if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
-                    group_by_sex_plot = gc4.checkbox("Group by Sex", value=False)
-                    sex_options_for_plot = [v for v in sex_column_values if v]
+                    if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
+                        group_by_sex_plot = gc4.checkbox("Group by Sex", value=False)
+                        sex_options_for_plot = [v for v in sex_column_values if v]
                     
                     # --- NOVA CAIXA DE SELEÇÃO DE SEXO ---
-                    selected_sexes_for_plot = st.multiselect(
+                        selected_sexes_for_plot = st.multiselect(
                         "Filter specific sexes for the chart:", 
-                        options=sex_options_for_plot, 
-                        default=sex_options_for_plot
+                            options=sex_options_for_plot, 
+                            default=sex_options_for_plot
                     )
                     
                     # Prevenção: se o usuário apagar todas as opções, volta ao padrão (mostra tudo)
