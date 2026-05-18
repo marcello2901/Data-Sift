@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Versão 3.1.1 - Atualização: Tabs restauradas, Harris-Boyd estratificado por sexo e remoção do texto de título.
+# Versão 3.1.2 - Atualização: Remoção de título residual e correção do bug da div vazia na tela de LGPD.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -789,18 +789,15 @@ def main():
     
     # --- TELA DE ENTRADA (LGPD) ---
     if not st.session_state.lgpd_accepted:
-        st.markdown(f"<h1 style='text-align: center; color: {COLOR_PRIMARY}; margin-bottom: 0;'>DataSift</h1>", unsafe_allow_html=True)
         if logo_base64:
             st.markdown(f'<div style="display: flex; justify-content: center; margin-top: 1rem; margin-bottom: 2rem;"><img src="data:image/png;base64,{logo_base64}" width="220"></div>', unsafe_allow_html=True)
         
-        st.markdown('<div class="card-container">', unsafe_allow_html=True)
         st.markdown(f"<h2 style='color: {COLOR_PRIMARY};'>Data Protection Compliance</h2>", unsafe_allow_html=True)
         st.markdown(GDPR_TERMS) 
         accepted = st.checkbox("By checking this box, I confirm that the data provided is anonymized.")
         if st.button("Access DataSift", type="primary", disabled=not accepted):
             st.session_state.lgpd_accepted = True
             st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     # --- INICIALIZAÇÃO DE VARIÁVEIS ---
