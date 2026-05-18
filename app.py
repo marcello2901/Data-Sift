@@ -157,7 +157,7 @@ def get_base64_of_bin_file(bin_file):
     except FileNotFoundError:
         return None
 
-logo_path = "_logo.png"
+logo_path = "datasift_logo.png"
 logo_base64 = get_base64_of_bin_file(logo_path)
 
 # --- CONSTANTES E DADOS ---
