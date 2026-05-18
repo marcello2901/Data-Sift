@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Versão 3.1.0 - Atualização: Funcionalidade Completa + Identidade Visual DataSift em Cards
+# Versão 3.1.1 - Atualização: Tabs restauradas, Harris-Boyd estratificado por sexo e remoção do texto de título.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -136,6 +136,16 @@ st.markdown(f"""
             padding-bottom: 8px;
         }}
         .mini-card-dark p {{ margin: 0; font-size: 0.95rem; }}
+        
+        /* --- TABS --- */
+        div[data-testid="stTabs"] button {{
+            font-weight: 600;
+            color: {COLOR_PRIMARY} !important;
+        }}
+        div[data-testid="stTabs"] button[aria-selected="true"] {{
+            color: {COLOR_SECONDARY} !important;
+            border-bottom-color: {COLOR_SECONDARY} !important;
+        }}
     </style>
 """, unsafe_allow_html=True)
 
@@ -807,8 +817,7 @@ def main():
         topic = st.selectbox("User Manual", list(MANUAL_CONTENT.keys()))
         st.markdown(MANUAL_CONTENT[topic], unsafe_allow_html=True)
 
-    # --- TÍTULO PRINCIPAL ---
-    st.markdown(f"<h1 style='text-align: center; color: {COLOR_PRIMARY}; margin-bottom: 0;'>Ferramenta Web DataSift: Filtragem e Aplicação LAVE</h1>", unsafe_allow_html=True)
+    # --- LOGO PRINCIPAL ---
     if logo_base64:
         st.markdown(f'<div style="display: flex; justify-content: center; margin-top: 1rem; margin-bottom: 2rem;"><img src="data:image/png;base64,{logo_base64}" width="220"></div>', unsafe_allow_html=True)
 
@@ -862,155 +871,195 @@ def main():
 
     is_ready_for_processing = st.session_state.age_column_is_valid and st.session_state.sex_column_is_valid
     
-    # --- CARD 2: FILTER TOOL (LAVE) ---
-    st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
-    st.markdown(f'<div class="card-header-bar">Configuração de Filtros de Exclusão (LAVE)</div>', unsafe_allow_html=True)
-    st.markdown('<div class="card-content-area">', unsafe_allow_html=True)
-    
-    if st.session_state.get('filter_error'):
-        st.error(st.session_state.filter_error)
-        del st.session_state['filter_error']
+    # --- SISTEMA DE ABAS (TABS) ---
+    tab_filter, tab_stratify = st.tabs(["2. Filter Tool (LAVE)", "3. Stratification Tool"])
+
+    # --- ABA 1: FILTER TOOL (LAVE) ---
+    with tab_filter:
+        st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
+        st.markdown(f'<div class="card-header-bar">Configuração de Filtros de Exclusão (LAVE)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-content-area">', unsafe_allow_html=True)
         
-    draw_filter_rules(sex_column_values, column_options)
-    
-    col_btn_add, col_space = st.columns([2, 8])
-    with col_btn_add:
-        if st.button("+ Add New Filter Rule", type="secondary", use_container_width=True):
-            st.session_state.filter_rules.append({'id': str(uuid.uuid4()), 'p_check': True, 'p_col': '', 'p_op1': '<', 'p_val1': '', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''})
-            st.rerun()
+        if st.session_state.get('filter_error'):
+            st.error(st.session_state.filter_error)
+            del st.session_state['filter_error']
             
-    st.markdown('</div></div>', unsafe_allow_html=True)
-
-    # --- BOTÃO GIGANTE DE AÇÃO (CIANO) ---
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Generate Filtered Sheet", type="primary", use_container_width=True, disabled=not is_ready_for_processing):
-        if df is None: st.error("Please upload a spreadsheet in Global Settings first.")
-        else:
-            with st.spinner("Applying filters..."):
-                progress_bar = st.progress(0, text="Initializing...")
-                processor = get_data_processor()
-                global_config = {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}
-                filtered_df = processor.apply_filters(df, st.session_state.filter_rules, global_config, progress_bar)
-                if not filtered_df.empty:
-                    is_excel = "Excel" in st.session_state.output_format
-                    file_bytes = to_excel(filtered_df) if is_excel else to_csv(filtered_df)
-                    timestamp = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d_%H%M%S")
-                    st.session_state.filtered_result = (file_bytes, f"Filtered_Sheet_{timestamp}.{'xlsx' if is_excel else 'csv'}")
-                else: st.success("No rows remaining after filters applied.")
-
-    if 'filtered_result' in st.session_state:
-        st.download_button("⬇️ Download Final Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True, type="secondary")
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # --- CARD 3: ANÁLISE VISUO-ESTATÍSTICA ---
-    st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
-    st.markdown(f'<div class="card-header-bar">Análise Visuo-Estatística e Estratificação</div>', unsafe_allow_html=True)
-    st.markdown('<div class="card-content-area">', unsafe_allow_html=True)
-
-    if df is not None:
-        if not st.session_state.col_idade or not st.session_state.col_dados:
-            st.info("⚠️ Select the **'Age Column'** and **'Data Column'** in Global Settings to enable visual analysis and Harris-Boyd stratification.")
-        else:
-            col_grafico, col_hboyd = st.columns([3, 1], gap="large")
-            
-            with col_grafico:
-                gc1, gc2, gc3, gc4 = st.columns(4)
-                chart_type = gc1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed")
-                intervalo_plot = gc2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", help="Age interval in years")
+        draw_filter_rules(sex_column_values, column_options)
+        
+        col_btn_add, col_space = st.columns([2, 8])
+        with col_btn_add:
+            if st.button("+ Add New Filter Rule", type="secondary", use_container_width=True):
+                st.session_state.filter_rules.append({'id': str(uuid.uuid4()), 'p_check': True, 'p_col': '', 'p_op1': '<', 'p_val1': '', 'p_expand': False, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '', 'c_check': False, 'c_idade_check': False, 'c_idade_op1': '>', 'c_idade_val1': '', 'c_idade_op2': '<', 'c_idade_val2': '', 'c_sexo_check': False, 'c_sexo_val': ''})
+                st.rerun()
                 
+        st.markdown('</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Generate Filtered Sheet", type="primary", use_container_width=True, disabled=not is_ready_for_processing):
+            if df is None: st.error("Please upload a spreadsheet in Global Settings first.")
+            else:
+                with st.spinner("Applying filters..."):
+                    progress_bar = st.progress(0, text="Initializing...")
+                    processor = get_data_processor()
+                    global_config = {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}
+                    filtered_df = processor.apply_filters(df, st.session_state.filter_rules, global_config, progress_bar)
+                    if not filtered_df.empty:
+                        is_excel = "Excel" in st.session_state.output_format
+                        file_bytes = to_excel(filtered_df) if is_excel else to_csv(filtered_df)
+                        timestamp = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d_%H%M%S")
+                        st.session_state.filtered_result = (file_bytes, f"Filtered_Sheet_{timestamp}.{'xlsx' if is_excel else 'csv'}")
+                    else: st.success("No rows remaining after filters applied.")
+
+        if 'filtered_result' in st.session_state:
+            st.download_button("⬇️ Download Final Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True, type="secondary")
+        st.markdown("<br>", unsafe_allow_html=True)
+
+    # --- ABA 2: ANÁLISE VISUO-ESTATÍSTICA E ESTRATIFICAÇÃO ---
+    with tab_stratify:
+        st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
+        st.markdown(f'<div class="card-header-bar">Análise Visuo-Estatística e Estratificação</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-content-area">', unsafe_allow_html=True)
+
+        if df is not None:
+            if not st.session_state.col_idade or not st.session_state.col_dados:
+                st.info("⚠️ Select the **'Age Column'** and **'Data Column'** in Global Settings to enable visual analysis and Harris-Boyd stratification.")
+            else:
+                col_grafico, col_hboyd = st.columns([3, 1], gap="large")
+                
+                # Variáveis capturadas para repasse ao mini-card de Harris Boyd
                 group_by_sex_plot = False
                 selected_sexes_for_plot = []
-                show_trendlines = False
 
-                if chart_type in ['Moving Average', 'Moving Median']:
-                    show_trendlines = gc3.checkbox("Plateau Lines", value=True, help="Draws horizontal lines based on Harris-Boyd cuts.")
+                with col_grafico:
+                    gc1, gc2, gc3, gc4 = st.columns(4)
+                    chart_type = gc1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed")
+                    intervalo_plot = gc2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", help="Age interval in years")
                     
-                if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
-                    group_by_sex_plot = gc4.checkbox("Group by Sex", value=False)
-                    sex_options_for_plot = [v for v in sex_column_values if v]
-                    selected_sexes_for_plot = sex_options_for_plot
+                    show_trendlines = False
+
+                    if chart_type in ['Moving Average', 'Moving Median']:
+                        show_trendlines = gc3.checkbox("Plateau Lines", value=True, help="Draws horizontal lines based on Harris-Boyd cuts.")
+                        
+                    if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
+                        group_by_sex_plot = gc4.checkbox("Group by Sex", value=False)
+                        sex_options_for_plot = [v for v in sex_column_values if v]
+                        selected_sexes_for_plot = sex_options_for_plot
+                    
+                    fig = plot_dispersion_chart(
+                        df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo,
+                        intervalo_plot, chart_type, group_by_sex_plot, selected_sexes_for_plot, show_trendlines
+                    )
+                    if fig: st.pyplot(fig)
+                    else: st.warning("Not enough valid data to generate chart.")
+
+                with col_hboyd:
+                    st.markdown('<div class="mini-card-dark">', unsafe_allow_html=True)
+                    st.markdown("<h4>Harris-Boyd Study</h4>", unsafe_allow_html=True)
+                    
+                    with st.spinner("Calculating..."):
+                        if group_by_sex_plot and st.session_state.col_sexo:
+                            # Loop estratificando por sexo caso a checkbox esteja ativa
+                            sex_options_hboyd = [v for v in sex_column_values if v]
+                            all_raw_dfs = []
+                            for sex_val in sex_options_hboyd:
+                                st.markdown(f"<p style='font-size:0.95rem; color:#A6DCEF; margin-bottom:2px; margin-top:10px;'><b>Sex: {sex_val}</b></p>", unsafe_allow_html=True)
+                                sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)]
+
+                                if sub_df.empty:
+                                    st.markdown("<p style='font-weight:bold; font-size:1.0rem;'>No data</p>", unsafe_allow_html=True)
+                                    continue
+
+                                _, raw_df, cuts = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados)
+
+                                if not cuts:
+                                    st.markdown("<p style='font-weight:bold; font-size:0.9rem;'>No stratification needed</p>", unsafe_allow_html=True)
+                                else:
+                                    for cut in cuts:
+                                        st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY};'>Barrier at {cut} years</p>", unsafe_allow_html=True)
+
+                                if not raw_df.empty:
+                                    raw_df.insert(0, 'Sex', str(sex_val))
+                                    all_raw_dfs.append(raw_df)
+
+                            st.markdown("</div>", unsafe_allow_html=True)
+
+                            with st.expander("View Full Statistical Data", expanded=False):
+                                if all_raw_dfs:
+                                    st.dataframe(pd.concat(all_raw_dfs, ignore_index=True), use_container_width=True, hide_index=True)
+                                else:
+                                    st.write("Insufficient variance data.")
+
+                        else:
+                            # Visão normal/geral, sem estratificar por sexo no mini-card
+                            texto_interpretativo, raw_df, cuts = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
+                            
+                            st.markdown("<p style='font-size:0.85rem; color:#A6DCEF; margin-bottom:5px;'>Recommended Age Cuts:</p>", unsafe_allow_html=True)
+                            if not cuts:
+                                st.markdown("<p style='font-weight:bold; font-size:1.1rem;'>No stratification needed</p>", unsafe_allow_html=True)
+                            else:
+                                for cut in cuts:
+                                    st.markdown(f"<p style='font-weight:bold; font-size:1.2rem; color:{COLOR_SECONDARY};'>Barrier at {cut} years</p>", unsafe_allow_html=True)
+                            
+                            st.markdown("</div>", unsafe_allow_html=True)
+                            
+                            with st.expander("View Full Statistical Data", expanded=False):
+                                if not raw_df.empty: st.dataframe(raw_df, use_container_width=True, hide_index=True)
+                                else: st.write("Insufficient variance data.")
+
+                st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2rem 0;'>", unsafe_allow_html=True)
+                st.markdown(f"<h3 style='color: {COLOR_PRIMARY}; font-size: 1.2rem;'>Generate Stratified Sheets</h3>", unsafe_allow_html=True)
                 
-                fig = plot_dispersion_chart(
-                    df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo,
-                    intervalo_plot, chart_type, group_by_sex_plot, selected_sexes_for_plot, show_trendlines
-                )
-                if fig: st.pyplot(fig)
-                else: st.warning("Not enough valid data to generate chart.")
+                s_col1, s_col2 = st.columns([1, 1])
+                with s_col1:
+                    st.write("**Age Range Definitions**")
+                    draw_stratum_rules()
+                    if st.button("Add Age Range", type="secondary"):
+                        st.session_state.stratum_rules.append({'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''})
+                        st.rerun()
 
-            with col_hboyd:
-                st.markdown('<div class="mini-card-dark">', unsafe_allow_html=True)
-                st.markdown("<h4>Harris-Boyd Study</h4>", unsafe_allow_html=True)
+                with s_col2:
+                    if st.session_state.sex_column_is_valid and sex_column_values:
+                        st.write("**Sex/Gender Filtering**")
+                        if 'strat_gender_selection' not in st.session_state: st.session_state.strat_gender_selection = {val: True for val in sex_column_values if val}
+                        cols = st.columns(min(len(sex_column_values), 3))
+                        col_idx = 0
+                        for gender_val in sex_column_values:
+                            if not gender_val: continue
+                            st.session_state.strat_gender_selection[gender_val] = cols[col_idx].checkbox(str(gender_val), value=st.session_state.strat_gender_selection.get(gender_val, True), key=f"strat_check_{gender_val}")
+                            col_idx = (col_idx + 1) % len(cols)
                 
-                with st.spinner("Calculating..."):
-                    texto_interpretativo, raw_df, cuts = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
-                    
-                    st.markdown("<p style='font-size:0.85rem; color:#A6DCEF; margin-bottom:5px;'>Recommended Age Cuts:</p>", unsafe_allow_html=True)
-                    if not cuts:
-                        st.markdown("<p style='font-weight:bold; font-size:1.1rem;'>No stratification needed</p>", unsafe_allow_html=True)
-                    else:
-                        for cut in cuts:
-                            st.markdown(f"<p style='font-weight:bold; font-size:1.2rem; color:{COLOR_SECONDARY};'>Barrier at {cut} years</p>", unsafe_allow_html=True)
-                    
-                    st.markdown("</div>", unsafe_allow_html=True)
-                    
-                with st.expander("View Full Statistical Data", expanded=False):
-                    if not raw_df.empty: st.dataframe(raw_df, use_container_width=True, hide_index=True)
-                    else: st.write("Insufficient variance data.")
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("Execute Stratification Splitting", type="secondary", use_container_width=True):
+                    st.session_state.confirm_stratify = True
+                    st.rerun()
 
-            st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2rem 0;'>", unsafe_allow_html=True)
-            st.markdown(f"<h3 style='color: {COLOR_PRIMARY}; font-size: 1.2rem;'>Generate Stratified Sheets</h3>", unsafe_allow_html=True)
+                if st.session_state.get('confirm_stratify', False):
+                    st.warning("Ensure you are stratifying the CORRECT file. Do you wish to proceed?")
+                    c1, c2 = st.columns(2)
+                    if c1.button("Yes, split data", type="primary"):
+                        with st.spinner("Generating strata..."):
+                            progress_bar = st.progress(0, text="Initializing...")
+                            processor = get_data_processor()
+                            age_rules = [r for r in st.session_state.stratum_rules if r.get('val1')]
+                            sex_rules = [{'value': gender_val, 'name': str(gender_val)} for gender_val, is_selected in st.session_state.get('strat_gender_selection', {}).items() if is_selected]
+                            st.session_state.stratified_results = processor.apply_stratification(df.copy(), {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
+                        st.session_state.confirm_stratify = False
+                        st.rerun()
+                    if c2.button("Cancel"):
+                        st.session_state.confirm_stratify = False
+                        st.rerun()
+
+                if st.session_state.get('stratified_results'):
+                    st.success(f"Successfully generated {len(st.session_state.stratified_results)} files!")
+                    is_excel = "Excel" in st.session_state.output_format
+                    for filename, df_to_download in st.session_state.stratified_results.items():
+                        file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
+                        st.download_button(f"📄 Download {filename}", data=file_bytes, file_name=f"{filename}.{'xlsx' if is_excel else 'csv'}", key=f"dl_{filename}", type="secondary")
+
+        else:
+            st.info("⚠️ Please upload a spreadsheet to access the analysis and stratification tools.")
             
-            s_col1, s_col2 = st.columns([1, 1])
-            with s_col1:
-                st.write("**Age Range Definitions**")
-                draw_stratum_rules()
-                if st.button("Add Age Range", type="secondary"):
-                    st.session_state.stratum_rules.append({'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''})
-                    st.rerun()
-
-            with s_col2:
-                if st.session_state.sex_column_is_valid and sex_column_values:
-                    st.write("**Sex/Gender Filtering**")
-                    if 'strat_gender_selection' not in st.session_state: st.session_state.strat_gender_selection = {val: True for val in sex_column_values if val}
-                    cols = st.columns(min(len(sex_column_values), 3))
-                    col_idx = 0
-                    for gender_val in sex_column_values:
-                        if not gender_val: continue
-                        st.session_state.strat_gender_selection[gender_val] = cols[col_idx].checkbox(str(gender_val), value=st.session_state.strat_gender_selection.get(gender_val, True), key=f"strat_check_{gender_val}")
-                        col_idx = (col_idx + 1) % len(cols)
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Execute Stratification Splitting", type="secondary", use_container_width=True):
-                st.session_state.confirm_stratify = True
-                st.rerun()
-
-            if st.session_state.get('confirm_stratify', False):
-                st.warning("Ensure you are stratifying the CORRECT file. Do you wish to proceed?")
-                c1, c2 = st.columns(2)
-                if c1.button("Yes, split data", type="primary"):
-                    with st.spinner("Generating strata..."):
-                        progress_bar = st.progress(0, text="Initializing...")
-                        processor = get_data_processor()
-                        age_rules = [r for r in st.session_state.stratum_rules if r.get('val1')]
-                        sex_rules = [{'value': gender_val, 'name': str(gender_val)} for gender_val, is_selected in st.session_state.get('strat_gender_selection', {}).items() if is_selected]
-                        st.session_state.stratified_results = processor.apply_stratification(df.copy(), {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
-                    st.session_state.confirm_stratify = False
-                    st.rerun()
-                if c2.button("Cancel"):
-                    st.session_state.confirm_stratify = False
-                    st.rerun()
-
-            if st.session_state.get('stratified_results'):
-                st.success(f"Successfully generated {len(st.session_state.stratified_results)} files!")
-                is_excel = "Excel" in st.session_state.output_format
-                for filename, df_to_download in st.session_state.stratified_results.items():
-                    file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
-                    st.download_button(f"📄 Download {filename}", data=file_bytes, file_name=f"{filename}.{'xlsx' if is_excel else 'csv'}", key=f"dl_{filename}", type="secondary")
-
-    else:
-        st.info("⚠️ Please upload a spreadsheet to access the analysis and stratification tools.")
-        
-    st.markdown('</div></div>', unsafe_allow_html=True)
+        st.markdown('</div></div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
