@@ -789,7 +789,7 @@ def main():
     
     # --- TELA DE ENTRADA (LGPD) ---
     if not st.session_state.lgpd_accepted:
-        st.markdown(f"<h1 style='text-align: center; color: {COLOR_PRIMARY}; margin-bottom: 0, unsafe_allow_html=True)
+        st.markdown(f"<h1 style='text-align: center; color: {COLOR_PRIMARY}; margin-bottom: 0; unsafe_allow_html=True)
         if logo_base64:
             st.markdown(f'<div style="display: flex; justify-content: center; margin-top: 1rem; margin-bottom: 2rem;"><img src="data:image/png;base64,{logo_base64}" width="220"></div>', unsafe_allow_html=True)
         
