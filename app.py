@@ -953,8 +953,8 @@ def main():
                     )
                     
                     # Prevenção: se o usuário apagar todas as opções, volta ao padrão (mostra tudo)
-                    if not selected_sexes_for_plot:
-                        selected_sexes_for_plot = sex_options_for_plot
+                        if not selected_sexes_for_plot:
+                            selected_sexes_for_plot = sex_options_for_plot
                     
                     fig = plot_dispersion_chart(
                         df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo,
