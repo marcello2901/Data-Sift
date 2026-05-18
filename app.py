@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Versão 3.1.2 - Atualização: Remoção de título residual e correção do bug da div vazia na tela de LGPD.
+# Versão 3.1.3 - Atualização: UI Refinements (Logo sidebar centralizada, Welcome Message) e 100% English.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -486,7 +486,7 @@ def load_dataframe(uploaded_file):
 @st.cache_data(show_spinner=False)
 def run_harris_boyd(df, col_idade, col_dados):
     temp_df = pd.DataFrame()
-    temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
+    temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
     def clean_val(x):
         if pd.isna(x): return np.nan
         x = str(x).replace(',', '.')
@@ -495,17 +495,17 @@ def run_harris_boyd(df, col_idade, col_dados):
         except: return np.nan
         
     temp_df['Data'] = pd.to_numeric(df[col_dados].apply(clean_val), errors='coerce')
-    temp_df = temp_df.dropna(subset=['Idade', 'Data'])
-    temp_df = temp_df[temp_df['Idade'] >= 0]
+    temp_df = temp_df.dropna(subset=['Age', 'Data'])
+    temp_df = temp_df[temp_df['Age'] >= 0]
     
     if temp_df.empty: return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
-    max_age = int(temp_df['Idade'].max())
+    max_age = int(temp_df['Age'].max())
     if max_age < 1: return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
         
     valid_cuts = []
     for age_cutoff in range(1, max_age):
-        g1 = temp_df[temp_df['Idade'] <= age_cutoff]['Data']
-        g2 = temp_df[temp_df['Idade'] > age_cutoff]['Data']
+        g1 = temp_df[temp_df['Age'] <= age_cutoff]['Data']
+        g2 = temp_df[temp_df['Age'] > age_cutoff]['Data']
         
         n1, n2 = len(g1), len(g2)
         if n1 < 30 or n2 < 30: continue
@@ -603,7 +603,7 @@ def run_harris_boyd(df, col_idade, col_dados):
 @st.cache_data(show_spinner=False)
 def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_type, group_by_sex, selected_sexes, show_trendlines):
     temp_df = pd.DataFrame()
-    temp_df['Idade'] = pd.to_numeric(df[col_idade], errors='coerce')
+    temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
     def clean_val(x):
         if pd.isna(x): return np.nan
         x = str(x).replace(',', '.')
@@ -612,33 +612,33 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
         except: return np.nan
     temp_df['Data'] = pd.to_numeric(df[col_dados].apply(clean_val), errors='coerce')
     
-    if col_sexo and col_sexo in df.columns: temp_df['Sexo'] = df[col_sexo].astype(str)
+    if col_sexo and col_sexo in df.columns: temp_df['Sex'] = df[col_sexo].astype(str)
     else: group_by_sex = False
 
-    temp_df = temp_df.dropna(subset=['Idade', 'Data'])
-    temp_df = temp_df[temp_df['Idade'] >= 0]
+    temp_df = temp_df.dropna(subset=['Age', 'Data'])
+    temp_df = temp_df[temp_df['Age'] >= 0]
     
-    if 'Sexo' in temp_df.columns and selected_sexes:
-        temp_df = temp_df[temp_df['Sexo'].isin(selected_sexes)]
+    if 'Sex' in temp_df.columns and selected_sexes:
+        temp_df = temp_df[temp_df['Sex'].isin(selected_sexes)]
         
     if temp_df.empty: return None
 
-    min_age, max_age = int(temp_df['Idade'].min()), int(temp_df['Idade'].max())
+    min_age, max_age = int(temp_df['Age'].min()), int(temp_df['Age'].max())
 
     if intervalo > 1:
         min_bin, max_bin = (min_age // intervalo) * intervalo, (max_age // intervalo) * intervalo
-        temp_df['Idade_Bin'] = (temp_df['Idade'] // intervalo) * intervalo
-        temp_df['Idade_Label'] = temp_df['Idade_Bin'].astype(int).astype(str) + " to " + (temp_df['Idade_Bin'] + intervalo - 1).astype(int).astype(str)
+        temp_df['Age_Bin'] = (temp_df['Age'] // intervalo) * intervalo
+        temp_df['Age_Label'] = temp_df['Age_Bin'].astype(int).astype(str) + " to " + (temp_df['Age_Bin'] + intervalo - 1).astype(int).astype(str)
         categories = [f"{b} to {b + intervalo - 1}" for b in range(min_bin, max_bin + 1, int(intervalo))]
     else:
-        temp_df['Idade_Label'] = temp_df['Idade'].astype(int).astype(str)
+        temp_df['Age_Label'] = temp_df['Age'].astype(int).astype(str)
         categories = [str(age) for age in range(min_age, max_age + 1)]
         
-    temp_df['Idade_Label'] = pd.Categorical(temp_df['Idade_Label'], categories=categories, ordered=True)
-    x_col = 'Idade_Label'
+    temp_df['Age_Label'] = pd.Categorical(temp_df['Age_Label'], categories=categories, ordered=True)
+    x_col = 'Age_Label'
 
     fig, ax = plt.subplots(figsize=(12, 5))
-    hue_col = 'Sexo' if group_by_sex and 'Sexo' in temp_df.columns else None
+    hue_col = 'Sex' if group_by_sex and 'Sex' in temp_df.columns else None
     palette_custom = [COLOR_PRIMARY, COLOR_SECONDARY, "#48CAE4", "#06D6A0"] 
     single_color = COLOR_TERTIARY
     
@@ -655,13 +655,13 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
         if show_trendlines:
             metric_str = 'mean' if chart_type == 'Moving Average' else 'median'
             def draw_segments(df_sub, color):
-                _, _, cuts = run_harris_boyd(df_sub, 'Idade', 'Data')
+                _, _, cuts = run_harris_boyd(df_sub, 'Age', 'Data')
                 starts, ends = [0] + [c + 1 for c in cuts], cuts + [999]
                 for s, e in zip(starts, ends):
-                    mask = (df_sub['Idade'] >= s) & (df_sub['Idade'] <= e)
+                    mask = (df_sub['Age'] >= s) & (df_sub['Age'] <= e)
                     if mask.sum() == 0: continue
                     val = df_sub[mask]['Data'].mean() if metric_str == 'mean' else df_sub[mask]['Data'].median()
-                    x_positions = [categories.index(lbl) for lbl in df_sub[mask]['Idade_Label'].unique() if lbl in categories]
+                    x_positions = [categories.index(lbl) for lbl in df_sub[mask]['Age_Label'].unique() if lbl in categories]
                     if not x_positions: continue
                     ax.hlines(y=val, xmin=min(x_positions)-0.4, xmax=max(x_positions)+0.4, color=color, linestyle='--', linewidth=2.5, alpha=0.8, zorder=10)
 
@@ -792,10 +792,14 @@ def main():
         if logo_base64:
             st.markdown(f'<div style="display: flex; justify-content: center; margin-top: 1rem; margin-bottom: 2rem;"><img src="data:image/png;base64,{logo_base64}" width="220"></div>', unsafe_allow_html=True)
         
-        st.markdown(f"<h2 style='color: {COLOR_PRIMARY};'>Data Protection Compliance</h2>", unsafe_allow_html=True)
+        st.title("Welcome to Data Sift!")
+        st.markdown("This program is designed to optimize your work with large volumes of data. Please read the terms below.")
+        st.divider()
+
+        st.header("Terms of Use and Data Protection Compliance")
         st.markdown(GDPR_TERMS) 
         accepted = st.checkbox("By checking this box, I confirm that the data provided is anonymized.")
-        if st.button("Access DataSift", type="primary", disabled=not accepted):
+        if st.button("Continue", type="primary", disabled=not accepted):
             st.session_state.lgpd_accepted = True
             st.rerun()
         return
@@ -808,8 +812,10 @@ def main():
     
     # --- BARRA LATERAL (Manual) ---
     with st.sidebar:
-        if logo_base64: st.image("datasift_logo.png", width=150)
-        else: st.title("DataSift")
+        if logo_base64:
+            st.markdown(f'<div style="display: flex; justify-content: center; margin-bottom: 1rem;"><img src="data:image/png;base64,{logo_base64}" width="150"></div>', unsafe_allow_html=True)
+        else:
+            st.markdown("<h1 style='text-align: center;'>DataSift</h1>", unsafe_allow_html=True)
         st.markdown("---")
         topic = st.selectbox("User Manual", list(MANUAL_CONTENT.keys()))
         st.markdown(MANUAL_CONTENT[topic], unsafe_allow_html=True)
@@ -874,7 +880,7 @@ def main():
     # --- ABA 1: FILTER TOOL (LAVE) ---
     with tab_filter:
         st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-header-bar">Configuração de Filtros de Exclusão (LAVE)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="card-header-bar">Exclusion Filter Configuration (LAVE)</div>', unsafe_allow_html=True)
         st.markdown('<div class="card-content-area">', unsafe_allow_html=True)
         
         if st.session_state.get('filter_error'):
@@ -914,7 +920,7 @@ def main():
     # --- ABA 2: ANÁLISE VISUO-ESTATÍSTICA E ESTRATIFICAÇÃO ---
     with tab_stratify:
         st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-header-bar">Análise Visuo-Estatística e Estratificação</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="card-header-bar">Visual-Statistical Analysis and Stratification</div>', unsafe_allow_html=True)
         st.markdown('<div class="card-content-area">', unsafe_allow_html=True)
 
         if df is not None:
