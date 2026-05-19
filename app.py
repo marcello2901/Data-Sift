@@ -21,7 +21,19 @@ import seaborn as sns
 import base64
 
 # --- CONFIGURAÇÃO E TEMA DA PÁGINA ---
-st.set_page_config(layout="wide", page_title="DataSift", page_icon="🧬", initial_sidebar_state="collapsed")
+st.set_page_config(layout="wide", page_title="DataSift", initial_sidebar_state="collapsed")
+
+# --- FAVICON ---
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Título da Sua Página</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+</head>
+<body>
+    </body>
+</html>
 
 # Paleta de Cores Baseada na Imagem de Referência
 COLOR_PRIMARY = "#073B4C"     # Azul Petróleo Escuro
