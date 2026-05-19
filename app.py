@@ -459,52 +459,35 @@ def run_harris_boyd(df, col_idade, col_dados):
     if temp_df.empty:
         return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
 
-    try:
-        temp_df['Data_BoxCox'], melhor_lambda = stats.boxcox(temp_df['Data'])
-    except Exception:
-        temp_df['Data_BoxCox'] = temp_df['Data']
-
     max_age = int(temp_df['Age'].max())
     if max_age < 1:
         return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
 
     # =========================================================================
     # FASE 1 — DETECÇÃO DE CORTES CANDIDATOS (Harris-Boyd + Teste Z + Cohen's d)
-    # Sem alterações: mesma lógica de validação por corte etário acumulado.
+    # Agora calculando diretamente sobre a escala original (sem Box-Cox)
     # =========================================================================
     valid_cuts = []
     for age_cutoff in range(1, max_age):
         mask_g1 = temp_df['Age'] <= age_cutoff
         mask_g2 = temp_df['Age'] > age_cutoff
 
-        g1_orig  = temp_df[mask_g1]['Data']
-        g2_orig  = temp_df[mask_g2]['Data']
-        g1_trans = temp_df[mask_g1]['Data_BoxCox']
-        g2_trans = temp_df[mask_g2]['Data_BoxCox']
+        g1 = temp_df[mask_g1]['Data']
+        g2 = temp_df[mask_g2]['Data']
 
-        n1, n2 = len(g1_trans), len(g2_trans)
+        n1, n2 = len(g1), len(g2)
         if n1 < 30 or n2 < 30: continue
 
-        mean1_orig, mean2_orig   = np.mean(g1_orig),  np.mean(g2_orig)
-        mean1_trans, mean2_trans = np.mean(g1_trans), np.mean(g2_trans)
-        var1_trans,  var2_trans  = np.var(g1_trans, ddof=1), np.var(g2_trans, ddof=1)
-        sd1_trans,   sd2_trans   = np.sqrt(var1_trans), np.sqrt(var2_trans)
+        mean1, mean2 = np.mean(g1), np.mean(g2)
+        var1,  var2  = np.var(g1, ddof=1), np.var(g2, ddof=1)
+        sd1,   sd2   = np.sqrt(var1), np.sqrt(var2)
 
-        sd_ratio = (
-            max(sd1_trans, sd2_trans) / min(sd1_trans, sd2_trans)
-            if min(sd1_trans, sd2_trans) > 0 else 0
-        )
-        den_z = (
-            np.sqrt((var1_trans / n1) + (var2_trans / n2))
-            if (var1_trans / n1) + (var2_trans / n2) > 0 else 0.0001
-        )
-        z      = abs(mean1_trans - mean2_trans) / den_z
+        sd_ratio = max(sd1, sd2) / min(sd1, sd2) if min(sd1, sd2) > 0 else 0
+        den_z = np.sqrt((var1 / n1) + (var2 / n2)) if (var1 / n1) + (var2 / n2) > 0 else 0.0001
+        z = abs(mean1 - mean2) / den_z
         z_crit = 3 * np.sqrt((n1 + n2) / 120) if (n1 + n2) < 120 else 3
-        den_d  = (
-            np.sqrt((var1_trans + var2_trans) / 2)
-            if (var1_trans + var2_trans) > 0 else 0.0001
-        )
-        d_value = abs(mean1_trans - mean2_trans) / den_d
+        den_d = np.sqrt((var1 + var2) / 2) if (var1 + var2) > 0 else 0.0001
+        d_value = abs(mean1 - mean2) / den_d
 
         partition_by_sd   = sd_ratio > 1.5
         partition_by_mean = (z > z_crit) and (d_value > 0.25)
@@ -518,13 +501,13 @@ def run_harris_boyd(df, col_idade, col_dados):
             valid_cuts.append({
                 'age': age_cutoff, 'justificativa': just,
                 'd_value': d_value, 'sd_ratio': sd_ratio,
-                'mean1': mean1_orig, 'mean2': mean2_orig, 'n1': n1, 'n2': n2,
+                'mean1': mean1, 'mean2': mean2, 'n1': n1, 'n2': n2,
                 'Age Cutoff':         f"<= {age_cutoff} vs > {age_cutoff}",
                 'Justification':      just,
                 'D-value':            round(d_value, 3),
                 'SD Ratio':           round(sd_ratio, 3),
-                'Mean (<= Cutoff)':   round(mean1_orig, 2),
-                'Mean (> Cutoff)':    round(mean2_orig, 2),
+                'Mean (<= Cutoff)':   round(mean1, 2),
+                'Mean (> Cutoff)':    round(mean2, 2),
             })
 
     if not valid_cuts:
@@ -535,7 +518,7 @@ def run_harris_boyd(df, col_idade, col_dados):
         )
 
     valid_cuts = sorted(valid_cuts, key=lambda x: x['age'])
-
+    
     # =========================================================================
     # FASE 2 — CLUSTERIZAÇÃO DINÂMICA (BASEADA NO COEFICIENTE DE VARIAÇÃO)
     #
