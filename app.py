@@ -439,29 +439,54 @@ class DataProcessor:
 
 # --- FUNÇÕES AUXILIARES OTIMIZADAS ---
 
-@st.cache_data(show_spinner=False)
-def run_harris_boyd(df, col_idade, col_dados):
-    temp_df = pd.DataFrame()
-    temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
+@st.cache_data(show_spinner="Reading file...")
+def load_dataframe(uploaded_file):
+    if uploaded_file is None: return None
+    try:
+        file_name = uploaded_file.name.lower()
+        uploaded_file.seek(0)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
+            shutil.copyfileobj(uploaded_file, tmp_file)
+            tmp_path = tmp_file.name
 
-    def clean_val(x):
-        if pd.isna(x): return np.nan
-        x = str(x).replace(',', '.')
-        x = ''.join(c for c in x if c.isdigit() or c == '.' or c == '-')
-        try: return float(x)
-        except: return np.nan
+        df = None
+        if file_name.endswith('.zip'):
+            with zipfile.ZipFile(tmp_path) as z:
+                valid_files = [f for f in z.namelist() if not f.startswith('__MACOSX/') and 
+                               (f.lower().endswith('.csv') or f.lower().endswith(('.xlsx', '.xls')))]
+                if not valid_files:
+                    st.error("The ZIP file contains no valid CSV or Excel files.")
+                    os.remove(tmp_path)
+                    return None
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(valid_files[0])[1]) as inner_tmp:
+                    inner_tmp.write(z.read(valid_files[0]))
+                    inner_path = inner_tmp.name
+                inner_filename = valid_files[0].lower()
+                if inner_filename.endswith('.csv'):
+                    try: df = pd.read_csv(inner_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
+                    except Exception: df = pd.read_csv(inner_path, sep=',', decimal='.', encoding='utf-8', engine='pyarrow')
+                else: df = pd.read_excel(inner_path, engine='openpyxl')
+                os.remove(inner_path)
+        elif file_name.endswith('.csv'):
+            try: df = pd.read_csv(tmp_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
+            except Exception: df = pd.read_csv(tmp_path, sep=',', decimal='.', encoding='utf-8', engine='pyarrow')
+        else:
+            df = pd.read_excel(tmp_path, engine='openpyxl')
 
-    temp_df['Data'] = pd.to_numeric(df[col_dados].apply(clean_val), errors='coerce')
-    temp_df = temp_df.dropna(subset=['Age', 'Data'])
-    temp_df = temp_df[temp_df['Age'] >= 0]
-    temp_df = temp_df[temp_df['Data'] > 0].copy()
+        if os.path.exists(tmp_path): os.remove(tmp_path)
 
-    if temp_df.empty:
-        return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
-
-    max_age = int(temp_df['Age'].max())
-    if max_age < 1:
-        return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
+        if df is not None:
+            for col in df.select_dtypes(include=['object']).columns:
+                mask = df[col].notna()
+                df.loc[mask, col] = df.loc[mask, col].astype(str)
+                try:
+                    if df[col].nunique() / len(df[col]) < 0.5:
+                        df[col] = df[col].astype('category')
+                except Exception: pass 
+        return df
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        return None
 
     # =========================================================================
     # FASE 1 — DETECÇÃO DE CORTES CANDIDATOS (Harris-Boyd + Teste Z + Cohen's d)
