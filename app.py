@@ -35,6 +35,9 @@ COLOR_TERTIARY = "#118AB2"    # Azul Petróleo Médio
 COLOR_BG = "#F8F9FA"          # Fundo Off-white
 COLOR_CARD_BG = "#FFFFFF"     # Fundo dos Cards Branco puro
 
+# Ícone de opção de ajuda
+help_icon = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px;'>?</span>"
+
 # Injeção de CSS para forçar a identidade visual e o Layout em Cards
 st.markdown(f"""
     <style>
@@ -795,7 +798,6 @@ def draw_filter_rules(sex_column_values, column_options):
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="small")
     all_checked = all(rule.get('p_check', False) for rule in st.session_state.filter_rules) if st.session_state.filter_rules else False
 
-    help_icon = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px;'>?</span>"
 
     header_cols[1].markdown(f"**Column** <span title='Type the exact column name as in the sheet. Separate multiple columns with ;'>{help_icon}</span>", unsafe_allow_html=True)
     header_cols[2].markdown(f"**Operator** <span title='Select the logical operator for the exclusion rule.'>{help_icon}</span>", unsafe_allow_html=True)
