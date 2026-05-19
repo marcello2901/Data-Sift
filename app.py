@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Versão 3.1.3
+# Versão 3.1.4 (Final Consolidation - No Box-Cox, Dynamic CV, Grouped Ages)
 import streamlit as st
 import pandas as pd
 from scipy import stats
@@ -25,7 +25,7 @@ import base64
 st.set_page_config(
     page_title="DataSift",
     page_icon="favicon.png", # Coloque o nome exato do arquivo da imagem que você salvou
-    layout="wide" # Opcional, se você quiser que a tela fique mais larga
+    layout="wide" 
 )
 
 # Paleta de Cores Baseada na Imagem de Referência
@@ -488,9 +488,35 @@ def load_dataframe(uploaded_file):
         st.error(f"Error reading file: {e}")
         return None
 
+@st.cache_data(show_spinner=False)
+def run_harris_boyd(df, col_idade, col_dados):
+    temp_df = pd.DataFrame()
+    temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
+
+    def clean_val(x):
+        if pd.isna(x): return np.nan
+        x = str(x).replace(',', '.')
+        x = ''.join(c for c in x if c.isdigit() or c == '.' or c == '-')
+        try: return float(x)
+        except: return np.nan
+
+    # Optimização da linha do clean_val (evitando redundância do to_numeric)
+    temp_df['Data'] = df[col_dados].apply(clean_val)
+    
+    # Expurgo seguro (sem restrição > 0, pois removemos Box-Cox)
+    temp_df = temp_df.dropna(subset=['Age', 'Data'])
+    temp_df = temp_df[temp_df['Age'] >= 0].copy()
+
+    if temp_df.empty:
+        return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
+
+    max_age = int(temp_df['Age'].max())
+    if max_age < 1:
+        return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
+
     # =========================================================================
     # FASE 1 — DETECÇÃO DE CORTES CANDIDATOS (Harris-Boyd + Teste Z + Cohen's d)
-    # Agora calculando diretamente sobre a escala original (sem Box-Cox)
+    # Calculando diretamente sobre a escala original
     # =========================================================================
     valid_cuts = []
     for age_cutoff in range(1, max_age):
@@ -546,23 +572,12 @@ def load_dataframe(uploaded_file):
     
     # =========================================================================
     # FASE 2 — CLUSTERIZAÇÃO DINÂMICA (BASEADA NO COEFICIENTE DE VARIAÇÃO)
-    #
-    # O algoritmo calcula o Coeficiente de Variação (CV) natural do grupo.
-    # A margem de equivalência clínica passa a ser desenhada sob medida
-    # para cada analito, sem precisar de margens fixas.
+    # A margem de equivalência clínica passa a ser desenhada sob medida.
     # =========================================================================
     MIN_INTERMEDIATE_N = 10
-    
-    # FATOR DE RIGOR (Tuning)
-    # Ex: 0.50 significa que toleramos uma diferença de médias equivalente a 
-    # até 50% do CV natural (variação biológica) daquele analito.
     CV_TOLERANCE_FACTOR = 0.50 
 
     def is_clinically_different_dynamic(vals_ref, vals_test):
-        """
-        Retorna True se a diferença entre as médias ultrapassar a margem gerada
-        dinamicamente pelo Coeficiente de Variação (CV) dos dados originais.
-        """
         if len(vals_ref) < 2 or len(vals_test) < 2:
             return False
         
@@ -570,14 +585,9 @@ def load_dataframe(uploaded_file):
         mean_test = np.mean(vals_test)
         sd_ref = np.std(vals_ref, ddof=1)
         
-        # 1. Calcula o CV natural do analito (em formato decimal)
         cv_ref = sd_ref / mean_ref if mean_ref > 0 else 0
-        
-        # 2. A Margem Dinâmica: Adapta a % de corte ao analito atual
-        # Sódio terá margem de ~1%, Triglicerídeos terá margem de ~20%
         dynamic_margin = cv_ref * CV_TOLERANCE_FACTOR
         
-        # 3. Calcula a diferença absoluta e o limite
         diff_absoluta = abs(mean_ref - mean_test)
         limite_equivalencia = mean_ref * dynamic_margin
         
@@ -590,7 +600,6 @@ def load_dataframe(uploaded_file):
         cut      = valid_cuts[i]
         prev_cut = current_cluster[-1]
 
-        # Extraindo as 3 zonas usando a ESCALA ORIGINAL ('Data')
         mask_mid = (temp_df['Age'] > prev_cut['age']) & (temp_df['Age'] <= cut['age'])
         mid_vals_orig    = temp_df[mask_mid]['Data'].values
         before_vals_orig = temp_df[temp_df['Age'] <= prev_cut['age']]['Data'].values
@@ -600,7 +609,6 @@ def load_dataframe(uploaded_file):
             current_cluster.append(cut)
             continue
 
-        # Chama a nova função dinâmica
         is_diff_from_left  = is_clinically_different_dynamic(before_vals_orig, mid_vals_orig)
         is_diff_from_right = is_clinically_different_dynamic(after_vals_orig, mid_vals_orig)
 
@@ -615,13 +623,12 @@ def load_dataframe(uploaded_file):
 
     # =========================================================================
     # FASE 3 — SELEÇÃO DO MELHOR REPRESENTANTE POR CLUSTER
-    # O corte com maior Cohen's d é o ponto de separação mais "forte" do cluster.
     # =========================================================================
     best_cuts = [max(cluster, key=lambda x: x['d_value']) for cluster in clusters]
     best_cuts = sorted(best_cuts, key=lambda x: x['age'])
 
     # =========================================================================
-    # FASE 4 — GERAÇÃO DO LAUDO (sem alterações)
+    # FASE 4 — GERAÇÃO DO LAUDO
     # =========================================================================
     texto_laudo  = "### 💡 Practical Stratification Suggestion\n"
     texto_laudo += (
@@ -1023,14 +1030,12 @@ def main():
                         group_by_sex_plot = gc4.checkbox("Group by Sex", value=False)
                         sex_options_for_plot = [v for v in sex_column_values if v]
                     
-                    # --- NOVA CAIXA DE SELEÇÃO DE SEXO ---
                         selected_sexes_for_plot = st.multiselect(
-                        "Filter specific sexes for the chart:", 
+                            "Filter specific sexes for the chart:", 
                             options=sex_options_for_plot, 
                             default=sex_options_for_plot
-                    )
-                    
-                    # Prevenção: se o usuário apagar todas as opções, volta ao padrão (mostra tudo)
+                        )
+                        
                         if not selected_sexes_for_plot:
                             selected_sexes_for_plot = sex_options_for_plot
                     
@@ -1060,7 +1065,7 @@ def main():
 
                                 _, raw_df, cuts = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados)
 
-                                # Pega a idade máxima real deste subgrupo para fechar o último intervalo
+                                # Pega a idade máxima real deste subgrupo
                                 max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max()) if not sub_df.empty else 100
 
                                 if not cuts:
@@ -1070,7 +1075,6 @@ def main():
                                     for cut in cuts:
                                         st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY};'>{last_age} - {cut} years</p>", unsafe_allow_html=True)
                                         last_age = cut + 1
-                                    # Renderiza o último grupo indo do último corte até a idade máxima
                                     st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY};'>{last_age} - {max_age_sub} years</p>", unsafe_allow_html=True)
 
                                 if not raw_df.empty:
@@ -1101,7 +1105,6 @@ def main():
                                 for cut in cuts:
                                     st.markdown(f"<p style='font-weight:bold; font-size:1.2rem; color:{COLOR_SECONDARY};'>{last_age} - {cut} years</p>", unsafe_allow_html=True)
                                     last_age = cut + 1
-                                # Renderiza o último grupo
                                 st.markdown(f"<p style='font-weight:bold; font-size:1.2rem; color:{COLOR_SECONDARY};'>{last_age} - {max_age_full} years</p>", unsafe_allow_html=True)
                             
                             st.markdown("</div>", unsafe_allow_html=True)
@@ -1112,6 +1115,7 @@ def main():
                                 else:
                                     st.write("Insufficient variance data.")
 
+                # --- SEÇÃO DE ESTRATIFICAÇÃO (Geração de Planilhas) ---
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2rem 0;'>", unsafe_allow_html=True)
                 st.markdown(f"<h3 style='color: {COLOR_PRIMARY}; font-size: 1.2rem;'>Generate Stratified Sheets</h3>", unsafe_allow_html=True)
                 
@@ -1126,12 +1130,17 @@ def main():
                 with s_col2:
                     if st.session_state.sex_column_is_valid and sex_column_values:
                         st.write("**Sex/Gender Filtering**")
-                        if 'strat_gender_selection' not in st.session_state: st.session_state.strat_gender_selection = {val: True for val in sex_column_values if val}
+                        if 'strat_gender_selection' not in st.session_state: 
+                            st.session_state.strat_gender_selection = {val: True for val in sex_column_values if val}
                         cols = st.columns(min(len(sex_column_values), 3))
                         col_idx = 0
                         for gender_val in sex_column_values:
                             if not gender_val: continue
-                            st.session_state.strat_gender_selection[gender_val] = cols[col_idx].checkbox(str(gender_val), value=st.session_state.strat_gender_selection.get(gender_val, True), key=f"strat_check_{gender_val}")
+                            st.session_state.strat_gender_selection[gender_val] = cols[col_idx].checkbox(
+                                str(gender_val), 
+                                value=st.session_state.strat_gender_selection.get(gender_val, True), 
+                                key=f"strat_check_{gender_val}"
+                            )
                             col_idx = (col_idx + 1) % len(cols)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
