@@ -480,7 +480,8 @@ def load_dataframe(uploaded_file):
                 mask = df[col].notna()
                 df.loc[mask, col] = df.loc[mask, col].astype(str)
                 try:
-                    if df[col].nunique() / len(df[col]) < 0.5:
+                    # Não converta a coluna de dados para categoria!
+                    if col != st.session_state.col_dados and df[col].nunique() / len(df[col]) < 0.5:
                         df[col] = df[col].astype('category')
                 except Exception: pass 
         return df
