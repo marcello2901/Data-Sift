@@ -1029,7 +1029,7 @@ def main():
                     show_trendlines = False
 
                     if chart_type in ['Moving Average', 'Moving Median']:
-                        show_trendlines = gc3.checkbox("Plateau Lines", value=True, help="Draws horizontal lines based on Harris-Boyd cuts.")
+                        show_trendlines = gc3.checkbox(f"Plateau Lines {help_icon}", value=True, help="Draws horizontal lines based on Harris-Boyd cuts.")
                         
                     if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
                         group_by_sex_plot = gc4.checkbox("Group by Sex", value=False)
