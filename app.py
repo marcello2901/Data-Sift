@@ -850,7 +850,7 @@ def main():
         c1, c2, c3, c4 = st.columns(4)
         with c1: st.selectbox("Age Column", options=column_options, key="col_idade", index=None, placeholder="Select Age column")
         with c2: st.selectbox("Sex/Gender Column", options=column_options, key="col_sexo", index=None, placeholder="Select Sex/Gender")
-        with c3: st.selectbox("Data Column (Harris-Boyd)", options=column_options, key="col_dados", index=None, placeholder="Select Data Column")
+        with c3: st.selectbox("Data Column", options=column_options, key="col_dados", index=None, placeholder="Select Data Column")
         with c4: st.selectbox("Output Format", ["CSV (.csv)", "Excel (.xlsx)"], key="output_format")
 
         st.session_state.sex_column_is_valid = True
