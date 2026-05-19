@@ -706,13 +706,14 @@ def draw_filter_rules(sex_column_values, column_options):
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="small")
     all_checked = all(rule.get('p_check', False) for rule in st.session_state.filter_rules) if st.session_state.filter_rules else False
 
-    header_cols[0].checkbox("Select all", value=all_checked, key='select_all_master_checkbox', on_change=handle_select_all, label_visibility="collapsed")
-    header_cols[1].markdown("**Column**", unsafe_allow_html=True)
-    header_cols[2].markdown("**Operator**", unsafe_allow_html=True)
-    header_cols[3].markdown("**Value**", unsafe_allow_html=True)
-    header_cols[5].markdown("**Compound Logic**", unsafe_allow_html=True)
-    header_cols[6].markdown("**Cond**", unsafe_allow_html=True)
-    header_cols[7].markdown("**Action**", unsafe_allow_html=True)
+    help_icon = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px;'>?</span>"
+
+    header_cols[1].markdown(f"**Column** <span title='Type the exact column name as in the sheet. Separate multiple columns with ;'>{help_icon}</span>", unsafe_allow_html=True)
+    header_cols[2].markdown(f"**Operator** <span title='Select the logical operator for the exclusion rule.'>{help_icon}</span>", unsafe_allow_html=True)
+    header_cols[3].markdown(f"**Value** <span title='Value to be evaluated. Tip: Use \"empty\" to filter blank cells.'>{help_icon}</span>", unsafe_allow_html=True)
+    header_cols[5].markdown(f"**Compound Logic** <span title='Expands the rule with AND, OR, or BETWEEN conditions.'>{help_icon}</span>", unsafe_allow_html=True)
+    header_cols[6].markdown(f"**Cond** <span title='Applies this rule conditionally based on Age or Sex.'>{help_icon}</span>", unsafe_allow_html=True)
+    header_cols[7].markdown(f"**Action** <span title='Clone (C) or Delete (X) this rule.'>{help_icon}</span>", unsafe_allow_html=True)
 
     ops_main, ops_age, ops_central_logic = ["", ">", "<", "=", "Not equal to", "≥", "≤"], ["", ">", "<", "≥", "≤", "="], ["AND", "OR", "BETWEEN"]
 
