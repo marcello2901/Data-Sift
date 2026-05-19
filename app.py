@@ -439,195 +439,237 @@ class DataProcessor:
 
 # --- FUNÇÕES AUXILIARES OTIMIZADAS ---
 
-@st.cache_data(show_spinner="Reading file...")
-def load_dataframe(uploaded_file):
-    if uploaded_file is None: return None
-    try:
-        file_name = uploaded_file.name.lower()
-        uploaded_file.seek(0)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
-            shutil.copyfileobj(uploaded_file, tmp_file)
-            tmp_path = tmp_file.name
-
-        df = None
-        if file_name.endswith('.zip'):
-            with zipfile.ZipFile(tmp_path) as z:
-                valid_files = [f for f in z.namelist() if not f.startswith('__MACOSX/') and 
-                               (f.lower().endswith('.csv') or f.lower().endswith(('.xlsx', '.xls')))]
-                if not valid_files:
-                    st.error("The ZIP file contains no valid CSV or Excel files.")
-                    os.remove(tmp_path)
-                    return None
-                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(valid_files[0])[1]) as inner_tmp:
-                    inner_tmp.write(z.read(valid_files[0]))
-                    inner_path = inner_tmp.name
-                inner_filename = valid_files[0].lower()
-                if inner_filename.endswith('.csv'):
-                    try: df = pd.read_csv(inner_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
-                    except Exception: df = pd.read_csv(inner_path, sep=',', decimal='.', encoding='utf-8', engine='pyarrow')
-                else: df = pd.read_excel(inner_path, engine='openpyxl')
-                os.remove(inner_path)
-        elif file_name.endswith('.csv'):
-            try: df = pd.read_csv(tmp_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
-            except Exception: df = pd.read_csv(tmp_path, sep=',', decimal='.', encoding='utf-8', engine='pyarrow')
-        else:
-            df = pd.read_excel(tmp_path, engine='openpyxl')
-
-        if os.path.exists(tmp_path): os.remove(tmp_path)
-
-        if df is not None:
-            for col in df.select_dtypes(include=['object']).columns:
-                mask = df[col].notna()
-                df.loc[mask, col] = df.loc[mask, col].astype(str)
-                try:
-                    if df[col].nunique() / len(df[col]) < 0.5:
-                        df[col] = df[col].astype('category')
-                except Exception: pass 
-        return df
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-        return None
-
 @st.cache_data(show_spinner=False)
 def run_harris_boyd(df, col_idade, col_dados):
     temp_df = pd.DataFrame()
     temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
+
     def clean_val(x):
         if pd.isna(x): return np.nan
         x = str(x).replace(',', '.')
         x = ''.join(c for c in x if c.isdigit() or c == '.' or c == '-')
         try: return float(x)
         except: return np.nan
-        
+
     temp_df['Data'] = pd.to_numeric(df[col_dados].apply(clean_val), errors='coerce')
     temp_df = temp_df.dropna(subset=['Age', 'Data'])
     temp_df = temp_df[temp_df['Age'] >= 0]
-    
-    # --- NOVO TRECHO: FILTRAGEM E TRANSFORMAÇÃO BOX-COX ---
-    # A transformação exige valores estritamente maiores que zero.
     temp_df = temp_df[temp_df['Data'] > 0].copy()
-    
-    if temp_df.empty: return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
-    
+
+    if temp_df.empty:
+        return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
+
     try:
-        # Cria uma nova coluna estritamente para o motor estatístico
         temp_df['Data_BoxCox'], melhor_lambda = stats.boxcox(temp_df['Data'])
     except Exception:
-        # Fallback de segurança caso a curva inviabilize o Box-Cox
         temp_df['Data_BoxCox'] = temp_df['Data']
-    # --------------------------------------------------------
-    
+
     max_age = int(temp_df['Age'].max())
-    if max_age < 1: return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
-        
+    if max_age < 1:
+        return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
+
+    # =========================================================================
+    # FASE 1 — DETECÇÃO DE CORTES CANDIDATOS (Harris-Boyd + Teste Z + Cohen's d)
+    # Sem alterações: mesma lógica de validação por corte etário acumulado.
+    # =========================================================================
     valid_cuts = []
     for age_cutoff in range(1, max_age):
         mask_g1 = temp_df['Age'] <= age_cutoff
         mask_g2 = temp_df['Age'] > age_cutoff
-        
-        # 1. Isolamos os dados originais (Para relatório clínico)
-        g1_orig = temp_df[mask_g1]['Data']
-        g2_orig = temp_df[mask_g2]['Data']
-        
-        # 2. Isolamos os dados transformados (Para matemática do Harris-Boyd)
+
+        g1_orig  = temp_df[mask_g1]['Data']
+        g2_orig  = temp_df[mask_g2]['Data']
         g1_trans = temp_df[mask_g1]['Data_BoxCox']
         g2_trans = temp_df[mask_g2]['Data_BoxCox']
-        
+
         n1, n2 = len(g1_trans), len(g2_trans)
         if n1 < 30 or n2 < 30: continue
-            
-        # Médias exibidas no laudo (Escala Original)
-        mean1_orig, mean2_orig = np.mean(g1_orig), np.mean(g2_orig)
-        
-        # Cálculos de variância e Teste Z (Escala Box-Cox Normalizada)
+
+        mean1_orig, mean2_orig   = np.mean(g1_orig),  np.mean(g2_orig)
         mean1_trans, mean2_trans = np.mean(g1_trans), np.mean(g2_trans)
-        var1_trans, var2_trans = np.var(g1_trans, ddof=1), np.var(g2_trans, ddof=1)
-        sd1_trans, sd2_trans = np.sqrt(var1_trans), np.sqrt(var2_trans)
-        
-        sd_ratio = max(sd1_trans, sd2_trans) / min(sd1_trans, sd2_trans) if min(sd1_trans, sd2_trans) > 0 else 0
-        den_z = np.sqrt((var1_trans/n1) + (var2_trans/n2)) if (var1_trans/n1) + (var2_trans/n2) > 0 else 0.0001
-        z = abs(mean1_trans - mean2_trans) / den_z
-        z_crit = 3 * np.sqrt((n1+n2)/120) if (n1+n2) < 120 else 3
-        den_d = np.sqrt((var1_trans + var2_trans) / 2) if (var1_trans + var2_trans) > 0 else 0.0001
+        var1_trans,  var2_trans  = np.var(g1_trans, ddof=1), np.var(g2_trans, ddof=1)
+        sd1_trans,   sd2_trans   = np.sqrt(var1_trans), np.sqrt(var2_trans)
+
+        sd_ratio = (
+            max(sd1_trans, sd2_trans) / min(sd1_trans, sd2_trans)
+            if min(sd1_trans, sd2_trans) > 0 else 0
+        )
+        den_z = (
+            np.sqrt((var1_trans / n1) + (var2_trans / n2))
+            if (var1_trans / n1) + (var2_trans / n2) > 0 else 0.0001
+        )
+        z      = abs(mean1_trans - mean2_trans) / den_z
+        z_crit = 3 * np.sqrt((n1 + n2) / 120) if (n1 + n2) < 120 else 3
+        den_d  = (
+            np.sqrt((var1_trans + var2_trans) / 2)
+            if (var1_trans + var2_trans) > 0 else 0.0001
+        )
         d_value = abs(mean1_trans - mean2_trans) / den_d
-        
-        partition_by_sd = sd_ratio > 1.5
+
+        partition_by_sd   = sd_ratio > 1.5
         partition_by_mean = (z > z_crit) and (d_value > 0.25)
-        should_partition = partition_by_sd or partition_by_mean
-        
+        should_partition  = partition_by_sd or partition_by_mean
+
         if should_partition:
-            just = 'Standard Deviation' if partition_by_sd and not partition_by_mean else ('Mean' if partition_by_mean and not partition_by_sd else 'Both')
+            just = (
+                'Standard Deviation' if partition_by_sd and not partition_by_mean
+                else ('Mean' if partition_by_mean and not partition_by_sd else 'Both')
+            )
             valid_cuts.append({
-                'age': age_cutoff, 'justificativa': just, 'd_value': d_value, 'sd_ratio': sd_ratio,
-                'mean1': mean1_orig, 'mean2': mean2_orig, 'n1': n1, 'n2': n2, # <-- Médias Originais
-                'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
-                'Justification': just, 'D-value': round(d_value, 3), 'SD Ratio': round(sd_ratio, 3),
-                'Mean (<= Cutoff)': round(mean1_orig, 2), 'Mean (> Cutoff)': round(mean2_orig, 2)
+                'age': age_cutoff, 'justificativa': just,
+                'd_value': d_value, 'sd_ratio': sd_ratio,
+                'mean1': mean1_orig, 'mean2': mean2_orig, 'n1': n1, 'n2': n2,
+                'Age Cutoff':         f"<= {age_cutoff} vs > {age_cutoff}",
+                'Justification':      just,
+                'D-value':            round(d_value, 3),
+                'SD Ratio':           round(sd_ratio, 3),
+                'Mean (<= Cutoff)':   round(mean1_orig, 2),
+                'Mean (> Cutoff)':    round(mean2_orig, 2),
             })
-            
+
     if not valid_cuts:
-         return "The statistical model found no clinical necessity or sufficient variance to recommend age-based reference intervals for this analyte.", pd.DataFrame(), []
+        return (
+            "The statistical model found no clinical necessity or sufficient variance "
+            "to recommend age-based reference intervals for this analyte.",
+            pd.DataFrame(), []
+        )
 
     valid_cuts = sorted(valid_cuts, key=lambda x: x['age'])
-    clusters = []
-    current_cluster = []
-    
-    for i, cut in enumerate(valid_cuts):
-        if not current_cluster:
+
+    # =========================================================================
+    # FASE 2 — CLUSTERIZAÇÃO BASEADA NOS VALORES (não na distância etária)
+    #
+    # Princípio: dois cortes candidatos adjacentes pertencem ao mesmo cluster
+    # se a ZONA INTERMEDIÁRIA entre eles (pacientes com idades entre os dois
+    # cortes) NÃO é uma população estatisticamente distinta de seus vizinhos.
+    #
+    # Critério de fusão:
+    #   Para cada par de cortes consecutivos (prev_cut, cut), extraímos três
+    #   grupos de valores na escala Box-Cox:
+    #     • before  → idades <= prev_cut
+    #     • mid     → prev_cut < idades <= cut  (zona intermediária)
+    #     • after   → idades > cut
+    #
+    #   Calculamos Cohen's d entre (before vs mid) e (mid vs after).
+    #   - Se mid é estatisticamente diferente de AMBOS os vizinhos
+    #     (d_left >= limiar E d_right >= limiar): mid é uma população própria,
+    #     logo os dois cortes são fronteiras de grupos realmente distintos → novo cluster.
+    #   - Se mid se confunde com pelo menos um vizinho: é apenas uma zona de
+    #     transição, e ambos os cortes estão detectando o mesmo fenômeno → mesmo cluster.
+    #
+    # Parâmetros ajustáveis:
+    #   MIN_INTERMEDIATE_N  → n mínimo na zona intermediária para avaliá-la.
+    #                         Abaixo disso, Cohen's d seria instável → fusão direta.
+    #   D_SPLIT_THRESHOLD   → Cohen's d mínimo para considerar dois grupos como
+    #                         clinicamente/estatisticamente distintos.
+    #                         Convenção Cohen: 0.2 = pequeno, 0.5 = médio, 0.8 = grande.
+    #                         0.40 = ponto de equilíbrio clínico conservador.
+    # =========================================================================
+    MIN_INTERMEDIATE_N = 10
+    D_SPLIT_THRESHOLD  = 0.40
+
+    def cohen_d_between(vals_a, vals_b):
+        """Cohen's d pooled entre dois arrays de valores Box-Cox."""
+        if len(vals_a) < 2 or len(vals_b) < 2:
+            return 0.0
+        var_a, var_b = np.var(vals_a, ddof=1), np.var(vals_b, ddof=1)
+        pooled_sd = np.sqrt((var_a + var_b) / 2)
+        return abs(np.mean(vals_a) - np.mean(vals_b)) / pooled_sd if pooled_sd > 0 else 0.0
+
+    clusters        = []
+    current_cluster = [valid_cuts[0]]
+
+    for i in range(1, len(valid_cuts)):
+        cut      = valid_cuts[i]
+        prev_cut = current_cluster[-1]   # último corte aceito no cluster atual
+
+        # Extraindo os três grupos de valores transformados
+        mask_mid = (temp_df['Age'] > prev_cut['age']) & (temp_df['Age'] <= cut['age'])
+        mid_vals    = temp_df[mask_mid]['Data_BoxCox'].values
+        before_vals = temp_df[temp_df['Age'] <= prev_cut['age']]['Data_BoxCox'].values
+        after_vals  = temp_df[temp_df['Age'] >  cut['age']]['Data_BoxCox'].values
+
+        # Zona intermediária pequena → Cohen's d instável → fusão conservadora
+        if len(mid_vals) < MIN_INTERMEDIATE_N:
             current_cluster.append(cut)
             continue
-        prev_cut = valid_cuts[i-1]
-        age_gap = cut['age'] - prev_cut['age']
-        cluster_max_d = max([c['d_value'] for c in current_cluster])
-        
-        if age_gap > 3:
-            clusters.append(current_cluster)
-            current_cluster = [cut]
-            continue
-        drop_from_peak = cluster_max_d - cut['d_value']
-        if drop_from_peak > 0.4 and drop_from_peak > (cluster_max_d * 0.25):
-            clusters.append(current_cluster)
-            current_cluster = [cut]
-            continue
-        d_diff = cut['d_value'] - prev_cut['d_value']
-        if d_diff > 0.15 and drop_from_peak > 0.15:
-            clusters.append(current_cluster)
-            current_cluster = [cut]
-            continue
-        current_cluster.append(cut)
-        
-    if current_cluster: clusters.append(current_cluster)
 
-    best_cuts = []
-    for cluster in clusters:
-        best = max(cluster, key=lambda x: x['d_value'])
-        best_cuts.append(best)
+        d_left  = cohen_d_between(before_vals, mid_vals)   # before vs mid
+        d_right = cohen_d_between(mid_vals, after_vals)    # mid vs after
 
+        if d_left >= D_SPLIT_THRESHOLD and d_right >= D_SPLIT_THRESHOLD:
+            # mid é distinto de AMBOS os vizinhos → população própria → novo cluster
+            clusters.append(current_cluster)
+            current_cluster = [cut]
+        else:
+            # mid se funde com pelo menos um vizinho → mesma transição → mesmo cluster
+            current_cluster.append(cut)
+
+    if current_cluster:
+        clusters.append(current_cluster)
+
+    # =========================================================================
+    # FASE 3 — SELEÇÃO DO MELHOR REPRESENTANTE POR CLUSTER
+    # O corte com maior Cohen's d é o ponto de separação mais "forte" do cluster.
+    # =========================================================================
+    best_cuts = [max(cluster, key=lambda x: x['d_value']) for cluster in clusters]
     best_cuts = sorted(best_cuts, key=lambda x: x['age'])
-    
-    texto_laudo = "### 💡 Practical Stratification Suggestion\n"
-    texto_laudo += f"The algorithm analyzed the means and data dispersion and detected **{'1 point' if len(best_cuts) == 1 else str(len(best_cuts)) + ' points'}** of significant clinical change across ages:\n\n"
+
+    # =========================================================================
+    # FASE 4 — GERAÇÃO DO LAUDO (sem alterações)
+    # =========================================================================
+    texto_laudo  = "### 💡 Practical Stratification Suggestion\n"
+    texto_laudo += (
+        f"The algorithm analyzed the means and data dispersion and detected "
+        f"**{'1 point' if len(best_cuts) == 1 else str(len(best_cuts)) + ' points'}** "
+        f"of significant clinical change across ages:\n\n"
+    )
 
     last_age = 0
     for i, cut in enumerate(best_cuts):
         idade_corte, m1, m2 = cut['age'], cut['mean1'], cut['mean2']
-        faixa = f"From {last_age} to {idade_corte} years" if i == 0 else f"From {last_age + 1} to {idade_corte} years"
+        faixa = (
+            f"From {last_age} to {idade_corte} years" if i == 0
+            else f"From {last_age + 1} to {idade_corte} years"
+        )
         texto_laudo += f"**{i+1}. Group {faixa} (Approx. Mean: {m1:.1f})**\n🔹 *Why separate?* "
-        if cut['justificativa'] == 'Mean': texto_laudo += f"In this life stage, there is a significant change in central tendency compared to the rest of the population (jump to {m2:.1f}). \n\n"
-        elif cut['justificativa'] == 'Standard Deviation': texto_laudo += "This age group presents a very different variability (data dispersion) compared to other ages. \n\n"
-        else: texto_laudo += f"This age group has a unique behavior, both due to a different mean (jump to {m2:.1f}) and high data dispersion. \n\n"
+        if cut['justificativa'] == 'Mean':
+            texto_laudo += (
+                f"In this life stage, there is a significant change in central tendency "
+                f"compared to the rest of the population (jump to {m2:.1f}). \n\n"
+            )
+        elif cut['justificativa'] == 'Standard Deviation':
+            texto_laudo += (
+                "This age group presents a very different variability (data dispersion) "
+                "compared to other ages. \n\n"
+            )
+        else:
+            texto_laudo += (
+                f"This age group has a unique behavior, both due to a different mean "
+                f"(jump to {m2:.1f}) and high data dispersion. \n\n"
+            )
         last_age = idade_corte
-        
-    texto_laudo += f"**{len(best_cuts)+1}. Group from {last_age + 1} years onwards (Approx. Mean: {best_cuts[-1]['mean2']:.1f})**\n🔹 From this barrier onwards, the model considers that the results tend to stabilize statistically, forming the main reference range for reports.\n"
+
+    texto_laudo += (
+        f"**{len(best_cuts)+1}. Group from {last_age + 1} years onwards "
+        f"(Approx. Mean: {best_cuts[-1]['mean2']:.1f})**\n"
+        f"🔹 From this barrier onwards, the model considers that the results tend to "
+        f"stabilize statistically, forming the main reference range for reports.\n"
+    )
 
     idades_sugeridas = [c['age'] for c in best_cuts]
     raw_data_list = [{
-        'Recommendation': '⭐ Suggested' if cut['age'] in idades_sugeridas else '',
-        'Age Cutoff': cut['Age Cutoff'], 'Justification': cut['Justification'], 'D-value': cut['D-value'],
-        'SD Ratio': cut['SD Ratio'], 'Mean (<= Cutoff)': cut['Mean (<= Cutoff)'], 'Mean (> Cutoff)': cut['Mean (> Cutoff)'],
-        'N (<= Cutoff)': cut['n1'], 'N (> Cutoff)': cut['n2']
+        'Recommendation':    '⭐ Suggested' if cut['age'] in idades_sugeridas else '',
+        'Age Cutoff':        cut['Age Cutoff'],
+        'Justification':     cut['Justification'],
+        'D-value':           cut['D-value'],
+        'SD Ratio':          cut['SD Ratio'],
+        'Mean (<= Cutoff)':  cut['Mean (<= Cutoff)'],
+        'Mean (> Cutoff)':   cut['Mean (> Cutoff)'],
+        'N (<= Cutoff)':     cut['n1'],
+        'N (> Cutoff)':      cut['n2'],
     } for cut in valid_cuts]
-    
+
     return texto_laudo, pd.DataFrame(raw_data_list), idades_sugeridas
 
 @st.cache_data(show_spinner=False)
