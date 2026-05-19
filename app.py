@@ -537,72 +537,69 @@ def run_harris_boyd(df, col_idade, col_dados):
     valid_cuts = sorted(valid_cuts, key=lambda x: x['age'])
 
     # =========================================================================
-    # FASE 2 — CLUSTERIZAÇÃO BASEADA NOS VALORES
+    # FASE 2 — CLUSTERIZAÇÃO DINÂMICA (BASEADA NO COEFICIENTE DE VARIAÇÃO)
     #
-    # Princípio: dois cortes candidatos adjacentes pertencem ao mesmo cluster
-    # se a ZONA INTERMEDIÁRIA entre eles (pacientes com idades entre os dois
-    # cortes) NÃO é uma população estatisticamente distinta de seus vizinhos.
-    #
-    # Critério de fusão:
-    #   Para cada par de cortes consecutivos (prev_cut, cut), extraímos três
-    #   grupos de valores na escala Box-Cox:
-    #     • before  → idades <= prev_cut
-    #     • mid     → prev_cut < idades <= cut  (zona intermediária)
-    #     • after   → idades > cut
-    #
-    #   Calculamos Cohen's d entre (before vs mid) e (mid vs after).
-    #   - Se mid é estatisticamente diferente de AMBOS os vizinhos
-    #     (d_left >= limiar E d_right >= limiar): mid é uma população própria,
-    #     logo os dois cortes são fronteiras de grupos realmente distintos → novo cluster.
-    #   - Se mid se confunde com pelo menos um vizinho: é apenas uma zona de
-    #     transição, e ambos os cortes estão detectando o mesmo fenômeno → mesmo cluster.
-    #
-    # Parâmetros ajustáveis:
-    #   MIN_INTERMEDIATE_N  → n mínimo na zona intermediária para avaliá-la.
-    #                         Abaixo disso, Cohen's d seria instável → fusão direta.
-    #   D_SPLIT_THRESHOLD   → Cohen's d mínimo para considerar dois grupos como
-    #                         clinicamente/estatisticamente distintos.
-    #                         Convenção Cohen: 0.2 = pequeno, 0.5 = médio, 0.8 = grande.
-    #                         0.40 = ponto de equilíbrio clínico conservador.
+    # O algoritmo calcula o Coeficiente de Variação (CV) natural do grupo.
+    # A margem de equivalência clínica passa a ser desenhada sob medida
+    # para cada analito, sem precisar de margens fixas.
     # =========================================================================
     MIN_INTERMEDIATE_N = 10
-    D_SPLIT_THRESHOLD  = 0.40
+    
+    # FATOR DE RIGOR (Tuning)
+    # Ex: 0.50 significa que toleramos uma diferença de médias equivalente a 
+    # até 50% do CV natural (variação biológica) daquele analito.
+    CV_TOLERANCE_FACTOR = 0.50 
 
-    def cohen_d_between(vals_a, vals_b):
-        """Cohen's d pooled entre dois arrays de valores Box-Cox."""
-        if len(vals_a) < 2 or len(vals_b) < 2:
-            return 0.0
-        var_a, var_b = np.var(vals_a, ddof=1), np.var(vals_b, ddof=1)
-        pooled_sd = np.sqrt((var_a + var_b) / 2)
-        return abs(np.mean(vals_a) - np.mean(vals_b)) / pooled_sd if pooled_sd > 0 else 0.0
+    def is_clinically_different_dynamic(vals_ref, vals_test):
+        """
+        Retorna True se a diferença entre as médias ultrapassar a margem gerada
+        dinamicamente pelo Coeficiente de Variação (CV) dos dados originais.
+        """
+        if len(vals_ref) < 2 or len(vals_test) < 2:
+            return False
+        
+        mean_ref = np.mean(vals_ref)
+        mean_test = np.mean(vals_test)
+        sd_ref = np.std(vals_ref, ddof=1)
+        
+        # 1. Calcula o CV natural do analito (em formato decimal)
+        cv_ref = sd_ref / mean_ref if mean_ref > 0 else 0
+        
+        # 2. A Margem Dinâmica: Adapta a % de corte ao analito atual
+        # Sódio terá margem de ~1%, Triglicerídeos terá margem de ~20%
+        dynamic_margin = cv_ref * CV_TOLERANCE_FACTOR
+        
+        # 3. Calcula a diferença absoluta e o limite
+        diff_absoluta = abs(mean_ref - mean_test)
+        limite_equivalencia = mean_ref * dynamic_margin
+        
+        return diff_absoluta > limite_equivalencia
 
     clusters        = []
     current_cluster = [valid_cuts[0]]
 
     for i in range(1, len(valid_cuts)):
         cut      = valid_cuts[i]
-        prev_cut = current_cluster[-1]   # último corte aceito no cluster atual
+        prev_cut = current_cluster[-1]
 
-        # Extraindo os três grupos de valores transformados
+        # Extraindo as 3 zonas usando a ESCALA ORIGINAL ('Data')
         mask_mid = (temp_df['Age'] > prev_cut['age']) & (temp_df['Age'] <= cut['age'])
-        mid_vals    = temp_df[mask_mid]['Data_BoxCox'].values
-        before_vals = temp_df[temp_df['Age'] <= prev_cut['age']]['Data_BoxCox'].values
-        after_vals  = temp_df[temp_df['Age'] >  cut['age']]['Data_BoxCox'].values
+        mid_vals_orig    = temp_df[mask_mid]['Data'].values
+        before_vals_orig = temp_df[temp_df['Age'] <= prev_cut['age']]['Data'].values
+        after_vals_orig  = temp_df[temp_df['Age'] >  cut['age']]['Data'].values
 
-        # Zona intermediária pequena → Cohen's d instável → fusão conservadora
-        if len(mid_vals) < MIN_INTERMEDIATE_N:
+        if len(mid_vals_orig) < MIN_INTERMEDIATE_N:
             current_cluster.append(cut)
             continue
 
-        d_left  = cohen_d_between(before_vals, mid_vals)   # before vs mid
-        d_right = cohen_d_between(mid_vals, after_vals)    # mid vs after
+        # Chama a nova função dinâmica
+        is_diff_from_left  = is_clinically_different_dynamic(before_vals_orig, mid_vals_orig)
+        is_diff_from_right = is_clinically_different_dynamic(after_vals_orig, mid_vals_orig)
 
-        if d_left >= D_SPLIT_THRESHOLD and d_right >= D_SPLIT_THRESHOLD:
-            # mid é distinto de AMBOS os vizinhos → população própria → novo cluster
+        if is_diff_from_left and is_diff_from_right:
             clusters.append(current_cluster)
             current_cluster = [cut]
         else:
-            # mid se funde com pelo menos um vizinho → mesma transição → mesmo cluster
             current_cluster.append(cut)
 
     if current_cluster:
