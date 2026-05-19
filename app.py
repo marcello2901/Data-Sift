@@ -1031,9 +1031,8 @@ def main():
                     show_trendlines = False
 
                     if chart_type in ['Moving Average', 'Moving Median']:
-                        cols = gc3.columns([0.85, 0.15])
-                        show_trendlines = cols[0].checkbox("Plateau Lines", value=True)
-                        cols[1].markdown(f"<div style='margin-top: 5px;'>{help_icon}</div>", unsafe_allow_html=True)
+                        show_trendlines = gc3.checkbox("Plateau Lines", value=True)
+                        gc3.markdown(f"<div style='margin-top: 5px;'>{help_icon}</div>", unsafe_allow_html=True)
                         
                     if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
                         group_by_sex_plot = gc4.checkbox("Group by Sex", value=False)
