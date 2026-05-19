@@ -492,6 +492,8 @@ def load_dataframe(uploaded_file):
 @st.cache_data(show_spinner=False)
 def run_harris_boyd(df, col_idade, col_dados):
     temp_df = pd.DataFrame()
+    
+    # Garantir que a idade seja numérica
     temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
 
     def clean_val(x):
@@ -501,19 +503,13 @@ def run_harris_boyd(df, col_idade, col_dados):
         try: return float(x)
         except: return np.nan
 
-    # Optimização da linha do clean_val (evitando redundância do to_numeric)
+    # A correção está aqui: aplicar a limpeza e FORÇAR float64
     temp_df['Data'] = df[col_dados].apply(clean_val)
+    temp_df['Data'] = temp_df['Data'].astype('float64') 
     
-    # Expurgo seguro (sem restrição > 0, pois removemos Box-Cox)
+    # Expurgo seguro
     temp_df = temp_df.dropna(subset=['Age', 'Data'])
     temp_df = temp_df[temp_df['Age'] >= 0].copy()
-
-    if temp_df.empty:
-        return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
-
-    max_age = int(temp_df['Age'].max())
-    if max_age < 1:
-        return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
 
     # =========================================================================
     # FASE 1 — DETECÇÃO DE CORTES CANDIDATOS (Harris-Boyd + Teste Z + Cohen's d)
