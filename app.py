@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
-# Versão 3.1.3 - Atualização: UI Refinements (Logo sidebar centralizada, Welcome Message) e 100% English.
+# Versão 3.1.3
 import streamlit as st
 import pandas as pd
+from scipy import stats
 import numpy as np
 import io
 import uuid
@@ -502,28 +503,53 @@ def run_harris_boyd(df, col_idade, col_dados):
     temp_df = temp_df.dropna(subset=['Age', 'Data'])
     temp_df = temp_df[temp_df['Age'] >= 0]
     
+    # --- NOVO TRECHO: FILTRAGEM E TRANSFORMAÇÃO BOX-COX ---
+    # A transformação exige valores estritamente maiores que zero.
+    temp_df = temp_df[temp_df['Data'] > 0].copy()
+    
     if temp_df.empty: return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
+    
+    try:
+        # Cria uma nova coluna estritamente para o motor estatístico
+        temp_df['Data_BoxCox'], melhor_lambda = stats.boxcox(temp_df['Data'])
+    except Exception:
+        # Fallback de segurança caso a curva inviabilize o Box-Cox
+        temp_df['Data_BoxCox'] = temp_df['Data']
+    # --------------------------------------------------------
+    
     max_age = int(temp_df['Age'].max())
     if max_age < 1: return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
         
     valid_cuts = []
     for age_cutoff in range(1, max_age):
-        g1 = temp_df[temp_df['Age'] <= age_cutoff]['Data']
-        g2 = temp_df[temp_df['Age'] > age_cutoff]['Data']
+        mask_g1 = temp_df['Age'] <= age_cutoff
+        mask_g2 = temp_df['Age'] > age_cutoff
         
-        n1, n2 = len(g1), len(g2)
+        # 1. Isolamos os dados originais (Para relatório clínico)
+        g1_orig = temp_df[mask_g1]['Data']
+        g2_orig = temp_df[mask_g2]['Data']
+        
+        # 2. Isolamos os dados transformados (Para matemática do Harris-Boyd)
+        g1_trans = temp_df[mask_g1]['Data_BoxCox']
+        g2_trans = temp_df[mask_g2]['Data_BoxCox']
+        
+        n1, n2 = len(g1_trans), len(g2_trans)
         if n1 < 30 or n2 < 30: continue
             
-        mean1, mean2 = np.mean(g1), np.mean(g2)
-        var1, var2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
-        sd1, sd2 = np.sqrt(var1), np.sqrt(var2)
+        # Médias exibidas no laudo (Escala Original)
+        mean1_orig, mean2_orig = np.mean(g1_orig), np.mean(g2_orig)
         
-        sd_ratio = max(sd1, sd2) / min(sd1, sd2) if min(sd1, sd2) > 0 else 0
-        den_z = np.sqrt((var1/n1) + (var2/n2)) if (var1/n1) + (var2/n2) > 0 else 0.0001
-        z = abs(mean1 - mean2) / den_z
+        # Cálculos de variância e Teste Z (Escala Box-Cox Normalizada)
+        mean1_trans, mean2_trans = np.mean(g1_trans), np.mean(g2_trans)
+        var1_trans, var2_trans = np.var(g1_trans, ddof=1), np.var(g2_trans, ddof=1)
+        sd1_trans, sd2_trans = np.sqrt(var1_trans), np.sqrt(var2_trans)
+        
+        sd_ratio = max(sd1_trans, sd2_trans) / min(sd1_trans, sd2_trans) if min(sd1_trans, sd2_trans) > 0 else 0
+        den_z = np.sqrt((var1_trans/n1) + (var2_trans/n2)) if (var1_trans/n1) + (var2_trans/n2) > 0 else 0.0001
+        z = abs(mean1_trans - mean2_trans) / den_z
         z_crit = 3 * np.sqrt((n1+n2)/120) if (n1+n2) < 120 else 3
-        den_d = np.sqrt((var1 + var2) / 2) if (var1 + var2) > 0 else 0.0001
-        d_value = abs(mean1 - mean2) / den_d
+        den_d = np.sqrt((var1_trans + var2_trans) / 2) if (var1_trans + var2_trans) > 0 else 0.0001
+        d_value = abs(mean1_trans - mean2_trans) / den_d
         
         partition_by_sd = sd_ratio > 1.5
         partition_by_mean = (z > z_crit) and (d_value > 0.25)
@@ -533,10 +559,10 @@ def run_harris_boyd(df, col_idade, col_dados):
             just = 'Standard Deviation' if partition_by_sd and not partition_by_mean else ('Mean' if partition_by_mean and not partition_by_sd else 'Both')
             valid_cuts.append({
                 'age': age_cutoff, 'justificativa': just, 'd_value': d_value, 'sd_ratio': sd_ratio,
-                'mean1': mean1, 'mean2': mean2, 'n1': n1, 'n2': n2,
+                'mean1': mean1_orig, 'mean2': mean2_orig, 'n1': n1, 'n2': n2, # <-- Médias Originais
                 'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
                 'Justification': just, 'D-value': round(d_value, 3), 'SD Ratio': round(sd_ratio, 3),
-                'Mean (<= Cutoff)': round(mean1, 2), 'Mean (> Cutoff)': round(mean2, 2)
+                'Mean (<= Cutoff)': round(mean1_orig, 2), 'Mean (> Cutoff)': round(mean2_orig, 2)
             })
             
     if not valid_cuts:
