@@ -537,7 +537,7 @@ def run_harris_boyd(df, col_idade, col_dados):
     valid_cuts = sorted(valid_cuts, key=lambda x: x['age'])
 
     # =========================================================================
-    # FASE 2 — CLUSTERIZAÇÃO BASEADA NOS VALORES (não na distância etária)
+    # FASE 2 — CLUSTERIZAÇÃO BASEADA NOS VALORES
     #
     # Princípio: dois cortes candidatos adjacentes pertencem ao mesmo cluster
     # se a ZONA INTERMEDIÁRIA entre eles (pacientes com idades entre os dois
