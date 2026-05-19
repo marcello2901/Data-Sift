@@ -1035,11 +1035,18 @@ def main():
 
                                 _, raw_df, cuts = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados)
 
+                                # Pega a idade máxima real deste subgrupo para fechar o último intervalo
+                                max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max()) if not sub_df.empty else 100
+
                                 if not cuts:
                                     st.markdown("<p style='font-weight:bold; font-size:0.9rem;'>No stratification needed</p>", unsafe_allow_html=True)
                                 else:
+                                    last_age = 0
                                     for cut in cuts:
-                                        st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY};'>Barrier at {cut} years</p>", unsafe_allow_html=True)
+                                        st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY};'>{last_age} - {cut} years</p>", unsafe_allow_html=True)
+                                        last_age = cut + 1
+                                    # Renderiza o último grupo indo do último corte até a idade máxima encontrada
+                                    st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY};'>{last_age} - {max_age_sub} years</p>", unsafe_allow_html=True)
 
                                 if not raw_df.empty:
                                     raw_df.insert(0, 'Sex', str(sex_val))
@@ -1052,6 +1059,31 @@ def main():
                                     st.dataframe(pd.concat(all_raw_dfs, ignore_index=True), use_container_width=True, hide_index=True)
                                 else:
                                     st.write("Insufficient variance data.")
+
+                        else:
+                            # Visão normal/geral, sem estratificar por sexo no mini-card
+                            texto_interpretativo, raw_df, cuts = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
+                            
+                            # Pega a idade máxima geral da planilha
+                            max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max()) if df is not None else 100
+                            
+                            st.markdown("<p style='font-size:0.85rem; color:#A6DCEF; margin-bottom:5px;'>Recommended Age Groups:</p>", unsafe_allow_html=True)
+                            
+                            if not cuts:
+                                st.markdown("<p style='font-weight:bold; font-size:1.1rem;'>No stratification needed</p>", unsafe_allow_html=True)
+                            else:
+                                last_age = 0
+                                for cut in cuts:
+                                    st.markdown(f"<p style='font-weight:bold; font-size:1.2rem; color:{COLOR_SECONDARY};'>{last_age} - {cut} years</p>", unsafe_allow_html=True)
+                                    last_age = cut + 1
+                                # Renderiza o último grupo
+                                st.markdown(f"<p style='font-weight:bold; font-size:1.2rem; color:{COLOR_SECONDARY};'>{last_age} - {max_age_full} years</p>", unsafe_allow_html=True)
+                            
+                            st.markdown("</div>", unsafe_allow_html=True)
+                            
+                            with st.expander("View Full Statistical Data", expanded=False):
+                                if not raw_df.empty: st.dataframe(raw_df, use_container_width=True, hide_index=True)
+                                else: st.write("Insufficient variance data.")
 
                         else:
                             # Visão normal/geral, sem estratificar por sexo no mini-card
