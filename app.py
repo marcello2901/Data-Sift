@@ -1024,7 +1024,7 @@ def main():
 
                 # Função auxiliar para gerar as mini-listas no Card Escuro (com limite de 5 e botão expandir)
                 def render_mini_tabela(titulo, cuts, max_age):
-                    st.markdown(f"<p style='font-size:0.85rem; color:#A6DCEF; margin-bottom:5px; margin-top:15px; text-transform: uppercase;'>{titulo}:</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='font-size:0.85rem; color:#41A0C4; font-weight: 600; margin-bottom:5px; margin-top:15px; text-transform: uppercase;'>{titulo}:</p>", unsafe_allow_html=True)
                     if not cuts:
                         st.markdown(f"<p style='font-weight:bold; font-size:0.95rem; color:{COLOR_SECONDARY};'>No stratification needed</p>", unsafe_allow_html=True)
                         return
