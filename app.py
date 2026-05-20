@@ -681,7 +681,22 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     ax.spines['right'].set_visible(False)
     ax.spines['left'].set_color('#CFD8DC')
     ax.spines['bottom'].set_color('#CFD8DC')
-    if hue_col: ax.legend(title='Sex/Gender', frameon=True, facecolor='white', edgecolor='#e0e0e0')
+    # --- Dentro da função plot_dispersion_chart ---
+# (Procure onde a legenda é configurada, próximo ao final da função)
+
+    # 1. Altere o local onde você define a legenda para colocá-la fora, à direita
+    if hue_col:
+        # Altere esta linha para usar bbox_to_anchor
+        # loc='upper left' e bbox_to_anchor=(1, 1) colocam a legenda no canto superior esquerdo da figura externa
+        ax.legend(title='Sex/Gender', frameon=True, facecolor='white', edgecolor='#e0e0e0',
+                  loc='upper left', bbox_to_anchor=(1.01, 1))
+        
+        # Opcional: Para evitar que a legenda externa corte, use tight_layout() ajustado
+        # Ou adicione um ajuste manual na margem direita da figura
+        plt.subplots_adjust(right=0.85)
+
+    # ... (resto da função)
+    # plt.tight_layout() # Você pode manter ou comentar se plt.subplots_adjust funcionar melhor no Streamlit
     plt.tight_layout()
     return fig
 
