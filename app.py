@@ -951,33 +951,24 @@ def main():
                 # --- Na função main(), dentro de with col_grafico: ---
 
                 with col_grafico:
-                    # 1. Ajustamos os pesos das colunas para criar um layout mais compacto
-                    # c3 para o controle Plateau (Texto+Ícone) e c4 exclusivo para o Checkbox
-                    c1, c2, c3, c4, c5 = st.columns([1, 1, 0.85, 0.15, 1])
+                    # Ajustamos as colunas: c3 (pequena para a caixa) e c4 (maior para o texto+ícone)
+                    c1, c2, c3, c4, c5 = st.columns([1, 1, 0.15, 0.85, 1])
                     
                     chart_type = c1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed")
                     intervalo_plot = c2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", help="Age interval in years")
                     
                     show_trendlines = False
                     if chart_type in ['Moving Average', 'Moving Median']:
-                        # --- SOLUÇÃO DE ALINHAMENTO CORRIGIDA ---
+                        # 1. A CAIXINHA FICA NA ESQUERDA (c3)
+                        show_trendlines = c3.checkbox("chk_plateau", value=True, label_visibility="collapsed")
                         
-                        # Usamos a coluna c3 para renderizar o Texto e o Ícone Customizado na horizontal
-                        # unsafe_allow_html=True é essencial aqui.
-                        c3.markdown(
-                            f"<div style='font-weight:normal; font-size:0.9rem; color:inherit; display: inline-block; margin-top: 5px;'>Plateau Lines {HELP_ICON}</div>", 
-                            unsafe_allow_html=True
-                        )
-                        
-                        # Usamos a coluna c4 exclusiva para o checkbox nativo do Streamlit.
-                        # O label_visibility="collapsed" remove o texto padrão "Plateau Lines" 
-                        # ao lado da caixinha para usar nosso cabeçalho customizado da c3.
-                        show_trendlines = c4.checkbox("Plateau Lines", value=True, label_visibility="collapsed")
+                        # 2. O TEXTO + ÍCONE FICA NA DIREITA (c4), puxado um pouco para perto da caixa
+                        # Usamos 'font-size: 1rem' e 'color: inherit' para imitar a fonte nativa do Streamlit
+                        c4.markdown(f"<div style='font-size: 1rem; color: inherit; margin-top: 5px; margin-left: -15px;'>Plateau Lines {HELP_ICON}</div>", unsafe_allow_html=True)
                         
                     if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
-                        # "Group by Sex" continua usando o layout nativo padrão na c5
                         group_by_sex_plot = c5.checkbox("Group by Sex", value=False)
-                        # ... continua o código
+
                         sex_options_for_plot = [v for v in sex_column_values if v]
                     
                         selected_sexes_for_plot = st.multiselect(
