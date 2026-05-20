@@ -618,7 +618,6 @@ def run_harris_boyd(df, col_idade, col_dados):
                 clinical_cuts.append({
                     'age': cutoff_age,
                     'Age Cutoff': f"<= {cutoff_age} vs > {cutoff_age}",
-                    'Justification': 'Equivalência Clínica (CV)',
                     'Diff %': round(pct_diff * 100, 2),
                     'Mean (<= Cutoff)': round(m_less, 2),
                     'Mean (> Cutoff)': round(m_greater, 2)
