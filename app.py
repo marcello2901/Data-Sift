@@ -1112,16 +1112,16 @@ def main():
                 
                 if not df_possiveis_global.empty:
                     # --- QUADRO 1: ABORDAGEM ESTATÍSTICA ---
-                    st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold; margin-bottom: 2px;'>1. Análise Estatística Clássica (Abordagem de Harris-Boyd)</h4>", unsafe_allow_html=True)
-                    st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Exibe todas as idades candidatas onde o Teste Z ou a Razão de Desvios Padrão detectaram significância estatística pura para partição.</p>", unsafe_allow_html=True)
+                    st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold; margin-bottom: 2px;'>1. Statistical approach (Harris-Boyd)</h4>", unsafe_allow_html=True)
+                    st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Displays all candidate ages where the Z-test or Standard Deviation Ratio detects pure statistical significance for classification.</p>", unsafe_allow_html=True)
                     
                     cols_to_show_pos = ['Age Cutoff', 'Justification', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
                     if group_by_sex_plot: cols_to_show_pos.insert(0, 'Sex')
                     st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
 
                     # --- QUADRO 2: ABORDAGEM PRÁTICA ---
-                    st.markdown("<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top: 30px; margin-bottom: 2px;'>2. Consolidação Clínica (Abordagem por Intervalo de Equivalência)</h4>", unsafe_allow_html=True)
-                    st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Cortes ideais propostos após agrupar as idades estatísticas vizinhas que não ultrapassam o limite do Coeficiente de Variação (CV), evitando super-estratificação laboratorial.</p>", unsafe_allow_html=True)
+                    st.markdown("<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top: 30px; margin-bottom: 2px;'>2. Practical approach (Equivalence limits)</h4>", unsafe_allow_html=True)
+                    st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Ideal cut-offs proposed after grouping close ages that do not exceed the Coefficient of Variation (CV) limit.</p>", unsafe_allow_html=True)
                     
                     cols_to_show_ideal = ['Age Cutoff', 'Justification', 'Diff %', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
                     if group_by_sex_plot: cols_to_show_ideal.insert(0, 'Sex')
