@@ -1070,7 +1070,7 @@ def main():
 
                                 # Renderiza as duas abordagens no Card
                                 render_mini_tabela("1. Harris-Boyd (Statistical approach)", cuts_possiveis, max_age_sub)
-                                render_mini_tabela("2. Equivalence limites (Practical approach)", cuts_ideais, max_age_sub)
+                                render_mini_tabela("2. Equivalence limits (Practical approach)", cuts_ideais, max_age_sub)
 
                                 # Guarda para exibir nas tabelonas globais depois
                                 if not df_possiveis.empty:
@@ -1092,8 +1092,8 @@ def main():
                             max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max()) if df is not None else 100
                             cuts_possiveis = df_possiveis['age'].tolist() if not df_possiveis.empty else []
 
-                            render_mini_tabela("1. Harris-Boyd (Estatístico)", cuts_possiveis, max_age_full)
-                            render_mini_tabela("2. Critério Clínico (Prático)", cuts_ideais, max_age_full)
+                            render_mini_tabela("1. Harris-Boyd (Statistical approach)", cuts_possiveis, max_age_full)
+                            render_mini_tabela("2. Equivalence limits (Practical approach)", cuts_ideais, max_age_full)
 
                             if not df_possiveis.empty:
                                 df_possiveis_global_list.append(df_possiveis)
