@@ -493,6 +493,32 @@ def load_dataframe(uploaded_file):
         st.error(f"Error reading file: {e}")
         return None
 
+def remove_outliers_tukey(df, col_dados, iterations=5, multiplier=2.0):
+    """
+    Aplica o Teste de Tukey iterativamente para remoção de outliers extremos.
+    """
+    df_clean = df.copy()
+    for _ in range(iterations):
+        if df_clean.empty:
+            break
+        Q1 = df_clean[col_dados].quantile(0.25)
+        Q3 = df_clean[col_dados].quantile(0.75)
+        IQR = Q3 - Q1
+        
+        lower_bound = Q1 - (multiplier * IQR)
+        upper_bound = Q3 + (multiplier * IQR)
+        
+        # Cria a máscara apenas com os dados dentro do limite seguro
+        mask = (df_clean[col_dados] >= lower_bound) & (df_clean[col_dados] <= upper_bound)
+        
+        # Se todos os dados atuais passaram no teste, não há mais outliers. Quebra o loop.
+        if mask.all(): 
+            break 
+            
+        df_clean = df_clean[mask]
+        
+    return df_clean
+
 @st.cache_data(show_spinner=False)
 def run_harris_boyd(df, col_idade, col_dados):
     temp_df = pd.DataFrame()
@@ -509,6 +535,11 @@ def run_harris_boyd(df, col_idade, col_dados):
     temp_df = temp_df.dropna(subset=['Age', 'Data'])
     temp_df = temp_df[temp_df['Age'] >= 0].copy()
 
+    # =========================================================================
+    # PRÉ-PROCESSAMENTO: LIMPEZA ITERATIVA DE TUKEY (5x, 2.0 IQR)
+    # =========================================================================
+    temp_df = remove_outliers_tukey(temp_df, 'Data', iterations=5, multiplier=2.0)
+
     if temp_df.empty:
         return pd.DataFrame(), pd.DataFrame(), []
 
@@ -516,10 +547,18 @@ def run_harris_boyd(df, col_idade, col_dados):
     if max_age < 1:
         return pd.DataFrame(), pd.DataFrame(), []
 
+    # Variáveis globais baseadas nos dados limpos para a tolerância clínica
+    global_mean = temp_df['Data'].mean()
+    global_sd = temp_df['Data'].std(ddof=1)
+    global_cv = (global_sd / global_mean) if global_mean > 0 else 0.10
+    cv_tolerance_margin = global_cv * 0.50
+
+    possible_cuts_hb = []
+    clinical_candidates = []
+
     # =========================================================================
-    # QUADRO 1 — DETECÇÃO PURA DE HARRIS-BOYD (Estatísticas Possíveis)
+    # VARREDURA ÚNICA (Alimenta as duas abordagens separadamente)
     # =========================================================================
-    possible_cuts = []
     for age_cutoff in range(1, max_age):
         mask_g1 = temp_df['Age'] <= age_cutoff
         mask_g2 = temp_df['Age'] > age_cutoff
@@ -531,6 +570,8 @@ def run_harris_boyd(df, col_idade, col_dados):
         if n1 < 30 or n2 < 30: continue
 
         mean1, mean2 = np.mean(g1), np.mean(g2)
+        
+        # --- ABORDAGEM 1: HARRIS-BOYD PURO (Matemática) ---
         var1,  var2  = np.var(g1, ddof=1), np.var(g2, ddof=1)
         sd1,   sd2   = np.sqrt(var1), np.sqrt(var2)
 
@@ -541,65 +582,63 @@ def run_harris_boyd(df, col_idade, col_dados):
 
         partition_by_sd   = sd_ratio > 1.5
         partition_by_mean = z > z_crit
-        should_partition  = partition_by_sd or partition_by_mean
 
-        if should_partition:
-            just = 'Standard Deviation' if partition_by_sd and not partition_by_mean else ('Mean' if partition_by_mean and not partition_by_sd else 'Both')
-            possible_cuts.append({
+        if partition_by_sd or partition_by_mean:
+            just_hb = 'Standard Deviation' if partition_by_sd and not partition_by_mean else ('Mean' if partition_by_mean and not partition_by_sd else 'Both')
+            possible_cuts_hb.append({
                 'age': age_cutoff,
                 'z_value': z,
                 'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
-                'Justification': just,
+                'Justification': just_hb,
                 'Z-score': round(z, 2),
                 'SD Ratio': round(sd_ratio, 2),
                 'Mean (<= Cutoff)': round(mean1, 2),
                 'Mean (> Cutoff)': round(mean2, 2)
             })
 
-    if not possible_cuts:
-        return pd.DataFrame(), pd.DataFrame(), []
-
-    # Correção do método do pandas para ordenação
-    df_possible = pd.DataFrame(possible_cuts).sort_values(by='age')
-
-    # =========================================================================
-    # QUADRO 2 — INTERVALO DE EQUIVALÊNCIA PELO CV CLÍNICO (Cortes Ideais)
-    # =========================================================================
-    # Buscamos o fator dinâmico baseado na variabilidade natural da população
-    # Como não temos uma entrada fixa para o CV na interface, estipulamos uma margem 
-    # de tolerância clínica padrão baseada em metade do CV global medido nos dados brutos.
-    global_mean = temp_df['Data'].mean()
-    global_sd = temp_df['Data'].std(ddof=1)
-    global_cv = (global_sd / global_mean) if global_mean > 0 else 0.10
-    
-    # 50% do CV global serve como régua adaptativa automática para o analito
-    cv_tolerance_margin = global_cv * 0.50 
-
-    clusters = []
-    # Ordena a lista nativa antes de clusterizar
-    possible_cuts = sorted(possible_cuts, key=lambda x: x['age'])
-    current_cluster = [possible_cuts[0]]
-
-    for i in range(1, len(possible_cuts)):
-        cut = possible_cuts[i]
-        prev_cut = current_cluster[-1]
-
-        # Calcula o impacto clínico percentual da transição entre os cortes vizinhos
-        pct_diff = abs(cut['Mean (<= Cutoff)'] - prev_cut['Mean (<= Cutoff)']) / prev_cut['Mean (<= Cutoff)'] if prev_cut['Mean (<= Cutoff)'] > 0 else 0
+        # --- ABORDAGEM 2: CRITÉRIO CLÍNICO INDEPENDENTE (Biologia) ---
+        # Avalia a variação puramente baseada na diferença das médias (ignorando o N e o Z)
+        pct_diff = abs(mean1 - mean2) / mean1 if mean1 > 0 else 0
         
-        if pct_diff <= cv_tolerance_margin:
-            current_cluster.append(cut)
-        else:
-            clusters.append(current_cluster)
-            current_cluster = [cut]
-    clusters.append(current_cluster)
+        if pct_diff > cv_tolerance_margin:
+            clinical_candidates.append({
+                'age': age_cutoff,
+                'pct_diff': pct_diff, # Métrica que usaremos para o desempate
+                'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
+                'Justification': 'Clinical CV',
+                'Diff %': round(pct_diff * 100, 2),
+                'Mean (<= Cutoff)': round(mean1, 2),
+                'Mean (> Cutoff)': round(mean2, 2)
+            })
 
-    # Seleção do melhor representante por pico de Z-score (Antiga Fase 3 unificada)
-    ideal_cuts_list = [max(cluster, key=lambda x: x['z_value']) for cluster in clusters]
-    df_ideal = pd.DataFrame(ideal_cuts_list).sort_values(by='age')
-    
-    # Lista limpa de idades sugeridas para atualizar os gráficos e o gerador de planilhas
-    idades_sugeridas = [c['age'] for c in ideal_cuts_list]
+    # Prepara o DataFrame do Quadro 1 (Harris-Boyd)
+    df_possible = pd.DataFrame(possible_cuts_hb).sort_values(by='age') if possible_cuts_hb else pd.DataFrame()
+
+    # Prepara o DataFrame do Quadro 2 (Clínico)
+    df_ideal = pd.DataFrame()
+    idades_sugeridas = []
+
+    if clinical_candidates:
+        clinical_candidates = sorted(clinical_candidates, key=lambda x: x['age'])
+        clusters_clinicos = []
+        current_cluster = [clinical_candidates[0]]
+
+        for i in range(1, len(clinical_candidates)):
+            cut = clinical_candidates[i]
+            prev_cut = current_cluster[-1]
+
+            # Agrupa idades que estão próximas (Zona de transição biológica)
+            if cut['age'] - prev_cut['age'] <= 2:
+                current_cluster.append(cut)
+            else:
+                clusters_clinicos.append(current_cluster)
+                current_cluster = [cut]
+        clusters_clinicos.append(current_cluster)
+
+        # Elege o ano daquela fase da vida que teve o MAIOR SALTO PERCENTUAL nas médias
+        ideal_cuts_list = [max(cluster, key=lambda x: x['pct_diff']) for cluster in clusters_clinicos]
+        df_ideal = pd.DataFrame(ideal_cuts_list).sort_values(by='age')
+        idades_sugeridas = [c['age'] for c in ideal_cuts_list]
 
     return df_possible, df_ideal, idades_sugeridas
 
@@ -1093,7 +1132,7 @@ def main():
                     st.markdown("<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top: 30px; margin-bottom: 2px;'>2. Consolidação Clínica (Abordagem por Intervalo de Equivalência)</h4>", unsafe_allow_html=True)
                     st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Cortes ideais propostos após agrupar as idades estatísticas vizinhas que não ultrapassam o limite do Coeficiente de Variação (CV), evitando super-estratificação laboratorial.</p>", unsafe_allow_html=True)
                     
-                    cols_to_show_ideal = ['Age Cutoff', 'Justification', 'Z-score', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                    cols_to_show_ideal = ['Age Cutoff', 'Justification', 'Diff %', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
                     if group_by_sex_plot: cols_to_show_ideal.insert(0, 'Sex')
                     st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
                 
