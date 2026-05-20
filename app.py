@@ -928,7 +928,8 @@ def main():
             if not st.session_state.col_idade or not st.session_state.col_dados:
                 st.info("⚠️ Select the **'Age Column'** and **'Data Column'** in Global Settings to enable visual analysis and Harris-Boyd stratification.")
             else:
-                col_grafico, col_hboyd = st.columns([3, 1], gap="large")
+                # Mantém o layout de colunas para o Gráfico e o Resumo Rápido
+                col_grafico, col_hboyd = st.columns([2.8, 1.2], gap="large")
                 
                 group_by_sex_plot = False
                 selected_sexes_for_plot = []
@@ -964,6 +965,10 @@ def main():
                     if fig: st.pyplot(fig)
                     else: st.warning("Not enough valid data to generate chart.")
 
+                # Variáveis para armazenar os resultados globais fora do bloco condicional
+                df_possiveis_global = pd.DataFrame()
+                df_ideais_global = pd.DataFrame()
+
                 with col_hboyd:
                     st.markdown('<div class="mini-card-dark">', unsafe_allow_html=True)
                     st.markdown("<h4>Harris-Boyd Study</h4>", unsafe_allow_html=True)
@@ -971,7 +976,7 @@ def main():
                     with st.spinner("Calculating..."):
                         if group_by_sex_plot and st.session_state.col_sexo:
                             # -------------------------------------------------
-                            # CENÁRIO A: ESTRATIFICADO POR SEXO
+                            # CENÁRIO A: ESTRATIFICADO POR SEXO (Resumo Lateral)
                             # -------------------------------------------------
                             sex_options_hboyd = [v for v in sex_column_values if v]
                             all_raw_dfs = []
@@ -984,13 +989,11 @@ def main():
                                     continue
 
                                 df_possiveis, df_ideais, cuts = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados)
-
                                 max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max()) if not sub_df.empty else 100
 
                                 if df_possiveis.empty:
                                     st.markdown("<p style='font-weight:bold; font-size:0.9rem;'>No stratification needed</p>", unsafe_allow_html=True)
                                 else:
-                                    # Mostra os grupos sugeridos em faixas de idade legíveis
                                     last_age = 0
                                     for cut in cuts:
                                         st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY};'>{last_age} - {cut} years</p>", unsafe_allow_html=True)
@@ -1000,27 +1003,20 @@ def main():
                                 if not df_ideais.empty:
                                     df_ideais.insert(0, 'Sex', str(sex_val))
                                     all_raw_dfs.append(df_ideais)
-
+                            
+                            if all_raw_dfs:
+                                df_ideais_global = pd.concat(all_raw_dfs, ignore_index=True)
                             st.markdown("</div>", unsafe_allow_html=True)
-
-                            # Expander para ver as tabelas completas de dados do subgrupo
-                            with st.expander("View Full Statistical Data", expanded=False):
-                                if all_raw_dfs:
-                                    st.dataframe(pd.concat(all_raw_dfs, ignore_index=True), use_container_width=True, hide_index=True)
-                                else:
-                                    st.write("Insufficient variance data.")
 
                         else:
                             # -------------------------------------------------
-                            # CENÁRIO B: VISÃO GERAL (O bloco que você postou)
+                            # CENÁRIO B: VISÃO GERAL (Resumo Lateral)
                             # -------------------------------------------------
-                            df_possiveis, df_ideais, cuts = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
-                            
+                            df_possiveis_global, df_ideais_global, cuts = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
                             max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max()) if df is not None else 100
                             
                             st.markdown("<p style='font-size:0.85rem; color:#A6DCEF; margin-bottom:5px;'>Recommended Age Groups:</p>", unsafe_allow_html=True)
-                            
-                            if df_possiveis.empty:
+                            if df_possiveis_global.empty:
                                 st.markdown("<p style='font-weight:bold; font-size:1.1rem;'>No stratification needed</p>", unsafe_allow_html=True)
                             else:
                                 last_age = 0
@@ -1028,22 +1024,35 @@ def main():
                                     st.markdown(f"<p style='font-weight:bold; font-size:1.2rem; color:{COLOR_SECONDARY};'>{last_age} - {cut} years</p>", unsafe_allow_html=True)
                                     last_age = cut + 1
                                 st.markdown(f"<p style='font-weight:bold; font-size:1.2rem; color:{COLOR_SECONDARY};'>{last_age} - {max_age_full} years</p>", unsafe_allow_html=True)
-                            
                             st.markdown("</div>", unsafe_allow_html=True)
-                            
-                            # AQUI entram os dois quadros detalhados pedidos, logo abaixo do card lateral
-                            st.markdown("<br>", unsafe_allow_html=True)
-                            if not df_possiveis.empty:
-                                st.markdown("<h4 style='color: #118AB2; font-size:1.1rem;'>1. Estatificações Possíveis (Harris-Boyd Puro)</h4>", unsafe_allow_html=True)
-                                cols_to_show_pos = ['Age Cutoff', 'Justification', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                                st.dataframe(df_possiveis[cols_to_show_pos], use_container_width=True, hide_index=True)
 
-                                st.markdown("<h4 style='color: #073B4C; font-size:1.1rem; margin-top: 15px;'>2. Cortes Ideais (Filtro por Equivalência)</h4>", unsafe_allow_html=True)
-                                cols_to_show_ideal = ['Age Cutoff', 'Justification', 'Z-score', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                                st.dataframe(df_ideais[cols_to_show_ideal], use_container_width=True, hide_index=True)
+                # =========================================================================
+                # NOVA POSIÇÃO DOS QUADROS: FORA DAS COLUNAS (LARGURA TOTAL DA TELA)
+                # =========================================================================
+                st.markdown("<div style='margin-top: 35px;'></div>", unsafe_allow_html=True)
+                
+                if not df_possiveis_global.empty:
+                    # --- QUADRO 1: ABORDAGEM ESTATÍSTICA ---
+                    st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold; margin-bottom: 2px;'>1. Análise Estatística Clássica (Abordagem de Harris-Boyd)</h4>", unsafe_allow_html=True)
+                    st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Exibe todas as idades candidatas onde o Teste Z ou a Razão de Desvios Padrão detectaram significância estatística pura para partição.</p>", unsafe_allow_html=True)
+                    
+                    cols_to_show_pos = ['Age Cutoff', 'Justification', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                    st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
+
+                    # --- QUADRO 2: ABORDAGEM PRÁTICA ---
+                    st.markdown("<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top: 30px; margin-bottom: 2px;'>2. Consolidação Clínica (Abordagem por Intervalo de Equivalência)</h4>", unsafe_allow_html=True)
+                    st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Cortes ideais propostos após agrupar as idades estatísticas vizinhas que não ultrapassam o limite do Coeficiente de Variação (CV), evitando super-estratificação laboratorial.</p>", unsafe_allow_html=True)
+                    
+                    cols_to_show_ideal = ['Age Cutoff', 'Justification', 'Z-score', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                    st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
+                
+                elif group_by_sex_plot and not df_ideais_global.empty:
+                    # Se estiver filtrado por sexo, mostra a tabela consolidada combinada aqui embaixo também
+                    st.markdown("<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top: 20px; margin-bottom: 12px;'>Detailed Stratification Data by Sex</h4>", unsafe_allow_html=True)
+                    st.dataframe(df_ideais_global, use_container_width=True, hide_index=True)
 
                 # --- SEÇÃO DE ESTRATIFICAÇÃO (Geração de Planilhas) ---
-                st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2rem 0;'>", unsafe_allow_html=True)
+                st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2.5rem 0;'>", unsafe_allow_html=True)
                 st.markdown(f"<h3 style='color: {COLOR_PRIMARY}; font-size: 1.2rem;'>Generate Stratified Sheets</h3>", unsafe_allow_html=True)
                 
                 s_col1, s_col2 = st.columns([1, 1])
