@@ -1026,7 +1026,7 @@ def main():
                 def render_mini_tabela(titulo, cuts, max_age):
                     st.markdown(f"<p style='font-size:0.85rem; color:#A6DCEF; margin-bottom:5px; margin-top:15px; text-transform: uppercase;'>{titulo}:</p>", unsafe_allow_html=True)
                     if not cuts:
-                        st.markdown("<p style='font-weight:bold; font-size:0.95rem; color:white;'>No stratification needed</p>", unsafe_allow_html=True)
+                        st.markdown(f"<p style='font-weight:bold; font-size:0.95rem; color:{COLOR_SECONDARY};'>No stratification needed</p>", unsafe_allow_html=True)
                         return
                     
                     ranges = []
