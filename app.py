@@ -1122,7 +1122,7 @@ def main():
                     st.markdown("<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top: 30px; margin-bottom: 2px;'>2. Practical approach (Equivalence limits)</h4>", unsafe_allow_html=True)
                     st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Ideal cut-offs proposed after grouping close ages that do not exceed the Coefficient of Variation (CV) limit.</p>", unsafe_allow_html=True)
                     
-                    cols_to_show_ideal = ['Age Cutoff', 'Justification', 'Diff %', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                    cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
                     if group_by_sex_plot: cols_to_show_ideal.insert(0, 'Sex')
                     st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
                 
