@@ -1042,7 +1042,7 @@ def main():
                     
                     # Se tiver mais de 5, coloca no Expander do Streamlit
                     if len(ranges) > 5:
-                        with st.expander(f"Expandir lista (+{len(ranges)-5} faixas)"):
+                        with st.expander(f" (+{len(ranges)-5} groups)"):
                             for r in ranges[5:]:
                                 # Cor escura porque o fundo do expander é claro
                                 st.markdown(f"<p style='font-weight:bold; font-size:0.95rem; color:#073B4C; margin-bottom:2px;'>{r}</p>", unsafe_allow_html=True)
@@ -1128,7 +1128,7 @@ def main():
                     st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
                 
                 else:
-                    st.info("O modelo estatístico não encontrou variância suficiente para justificar a criação de faixas etárias baseadas nesses dados.")
+                    st.info("The statistical model did not find sufficient variance to justify creating age ranges based on this data.")
 
                 # --- SEÇÃO DE ESTRATIFICAÇÃO (Geração de Planilhas) ---
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2.5rem 0;'>", unsafe_allow_html=True)
