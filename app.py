@@ -524,7 +524,7 @@ def run_harris_boyd(df, col_idade, col_dados):
         return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
 
     # =========================================================================
-    # FASE 1 — DETECÇÃO DE CORTES CANDIDATOS (Harris-Boyd + Teste Z + Cohen's d)
+    # FASE 1 — DETECÇÃO DE CORTES CANDIDATOS (Harris-Boyd)
     # Calculando diretamente sobre a escala original
     # =========================================================================
     valid_cuts = []
@@ -542,15 +542,16 @@ def run_harris_boyd(df, col_idade, col_dados):
         var1,  var2  = np.var(g1, ddof=1), np.var(g2, ddof=1)
         sd1,   sd2   = np.sqrt(var1), np.sqrt(var2)
 
+        # ... (cálculos anteriores de n1, n2, mean1, mean2, var1, var2, sd1, sd2)
+
         sd_ratio = max(sd1, sd2) / min(sd1, sd2) if min(sd1, sd2) > 0 else 0
         den_z = np.sqrt((var1 / n1) + (var2 / n2)) if (var1 / n1) + (var2 / n2) > 0 else 0.0001
         z = abs(mean1 - mean2) / den_z
         z_crit = 3 * np.sqrt((n1 + n2) / 120) if (n1 + n2) < 120 else 3
-        den_d = np.sqrt((var1 + var2) / 2) if (var1 + var2) > 0 else 0.0001
-        d_value = abs(mean1 - mean2) / den_d
 
+        # Critério de Harris-Boyd:
         partition_by_sd   = sd_ratio > 1.5
-        partition_by_mean = (z > z_crit) and (d_value > 0.25)
+        partition_by_mean = z > z_crit       # Removido o filtro de Cohen's d (d_value > 0.25)
         should_partition  = partition_by_sd or partition_by_mean
 
         if should_partition:
@@ -560,11 +561,10 @@ def run_harris_boyd(df, col_idade, col_dados):
             )
             valid_cuts.append({
                 'age': age_cutoff, 'justificativa': just,
-                'd_value': d_value, 'sd_ratio': sd_ratio,
+                'sd_ratio': sd_ratio,
                 'mean1': mean1, 'mean2': mean2, 'n1': n1, 'n2': n2,
                 'Age Cutoff':         f"<= {age_cutoff} vs > {age_cutoff}",
                 'Justification':      just,
-                'D-value':            round(d_value, 3),
                 'SD Ratio':           round(sd_ratio, 3),
                 'Mean (<= Cutoff)':   round(mean1, 2),
                 'Mean (> Cutoff)':    round(mean2, 2),
