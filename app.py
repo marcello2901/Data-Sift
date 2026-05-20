@@ -995,7 +995,7 @@ def main():
 
                 with col_hboyd:
                     st.markdown('<div class="mini-card-dark">', unsafe_allow_html=True)
-                    st.markdown("<h4>Harris-Boyd Study</h4>", unsafe_allow_html=True)
+                    st.markdown("<h4>Stratification studies</h4>", unsafe_allow_html=True)
                     
                     with st.spinner("Calculating..."):
                         if group_by_sex_plot and st.session_state.col_sexo:
