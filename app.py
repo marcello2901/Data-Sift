@@ -37,6 +37,7 @@ COLOR_CARD_BG = "#FFFFFF"     # Fundo dos Cards Branco puro
 
 # Ícone de opção de ajuda
 help_icon = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px;'>?</span>"
+HELP_ICON = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px; margin-left: 5px;' title='Draws horizontal lines based on Harris-Boyd cuts.'>?</span>"
 
 # Injeção de CSS para forçar a identidade visual e o Layout em Cards
 st.markdown(f"""
@@ -1031,8 +1032,11 @@ def main():
                     show_trendlines = False
 
                     if chart_type in ['Moving Average', 'Moving Median']:
-                        show_trendlines = gc3.checkbox("Plateau Lines", value=True)
-                        gc3.markdown(f"<div style='margin-top: 5px;{help_icon}</div>", unsafe_allow_html=True)
+                        gc3.markdown(
+                            f"<div style='font-size: 14px; font-weight: normal; color: inherit; margin-bottom: 4px; display: inline-block;'>Plateau Lines {HELP_ICON}</div>", 
+                            unsafe_allow_html=True
+                        )
+                        show_trendlines = gc3.checkbox("Plateau Lines", value=True, label_visibility="collapsed")
                         
                     if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
                         group_by_sex_plot = gc4.checkbox("Group by Sex", value=False)
