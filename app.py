@@ -540,54 +540,44 @@ def run_harris_boyd(df, col_idade, col_dados):
     # =========================================================================
     temp_df = remove_outliers_tukey(temp_df, 'Data', iterations=5, multiplier=2.0)
 
-    if temp_df.empty:
-        return pd.DataFrame(), pd.DataFrame(), []
-
+    if temp_df.empty: return pd.DataFrame(), pd.DataFrame(), []
     max_age = int(temp_df['Age'].max())
-    if max_age < 1:
-        return pd.DataFrame(), pd.DataFrame(), []
+    if max_age < 1: return pd.DataFrame(), pd.DataFrame(), []
 
-    # Variáveis globais baseadas nos dados limpos para a tolerância clínica
+    # Margem de tolerância clínica baseada no CV global dos dados limpos
     global_mean = temp_df['Data'].mean()
     global_sd = temp_df['Data'].std(ddof=1)
     global_cv = (global_sd / global_mean) if global_mean > 0 else 0.10
     cv_tolerance_margin = global_cv * 0.50
 
+    # =========================================================================
+    # PISTA 1: ABORDAGEM ESTATÍSTICA (HARRIS-BOYD PURO) - 100% INDEPENDENTE
+    # =========================================================================
     possible_cuts_hb = []
-    clinical_candidates = []
-
-    # =========================================================================
-    # VARREDURA ÚNICA (Alimenta as duas abordagens separadamente)
-    # =========================================================================
     for age_cutoff in range(1, max_age):
         mask_g1 = temp_df['Age'] <= age_cutoff
         mask_g2 = temp_df['Age'] > age_cutoff
-
-        g1 = temp_df[mask_g1]['Data']
-        g2 = temp_df[mask_g2]['Data']
-
+        g1, g2 = temp_df[mask_g1]['Data'], temp_df[mask_g2]['Data']
         n1, n2 = len(g1), len(g2)
+        
         if n1 < 30 or n2 < 30: continue
 
         mean1, mean2 = np.mean(g1), np.mean(g2)
-        
-        # --- ABORDAGEM 1: HARRIS-BOYD PURO (Matemática) ---
-        var1,  var2  = np.var(g1, ddof=1), np.var(g2, ddof=1)
-        sd1,   sd2   = np.sqrt(var1), np.sqrt(var2)
+        var1, var2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
+        sd1, sd2 = np.sqrt(var1), np.sqrt(var2)
 
         sd_ratio = max(sd1, sd2) / min(sd1, sd2) if min(sd1, sd2) > 0 else 0
         den_z = np.sqrt((var1 / n1) + (var2 / n2)) if (var1 / n1) + (var2 / n2) > 0 else 0.0001
         z = abs(mean1 - mean2) / den_z
         z_crit = 3 * np.sqrt((n1 + n2) / 120) if (n1 + n2) < 120 else 3
 
-        partition_by_sd   = sd_ratio > 1.5
+        partition_by_sd = sd_ratio > 1.5
         partition_by_mean = z > z_crit
 
         if partition_by_sd or partition_by_mean:
             just_hb = 'Standard Deviation' if partition_by_sd and not partition_by_mean else ('Mean' if partition_by_mean and not partition_by_sd else 'Both')
             possible_cuts_hb.append({
-                'age': age_cutoff,
-                'z_value': z,
+                'age': age_cutoff, 'z_value': z,
                 'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
                 'Justification': just_hb,
                 'Z-score': round(z, 2),
@@ -595,50 +585,52 @@ def run_harris_boyd(df, col_idade, col_dados):
                 'Mean (<= Cutoff)': round(mean1, 2),
                 'Mean (> Cutoff)': round(mean2, 2)
             })
-
-        # --- ABORDAGEM 2: CRITÉRIO CLÍNICO INDEPENDENTE (Biologia) ---
-        # Avalia a variação puramente baseada na diferença das médias (ignorando o N e o Z)
-        pct_diff = abs(mean1 - mean2) / mean1 if mean1 > 0 else 0
-        
-        if pct_diff > cv_tolerance_margin:
-            clinical_candidates.append({
-                'age': age_cutoff,
-                'pct_diff': pct_diff, # Métrica que usaremos para o desempate
-                'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
-                'Justification': 'Clinical CV',
-                'Diff %': round(pct_diff * 100, 2),
-                'Mean (<= Cutoff)': round(mean1, 2),
-                'Mean (> Cutoff)': round(mean2, 2)
-            })
-
-    # Prepara o DataFrame do Quadro 1 (Harris-Boyd)
     df_possible = pd.DataFrame(possible_cuts_hb).sort_values(by='age') if possible_cuts_hb else pd.DataFrame()
 
-    # Prepara o DataFrame do Quadro 2 (Clínico)
-    df_ideal = pd.DataFrame()
+    # =========================================================================
+    # PISTA 2: ABORDAGEM CLÍNICA (EQUIVALÊNCIA POR CV) - 100% INDEPENDENTE
+    # =========================================================================
+    # Agrupa e calcula as médias anuais reais de cada idade isolada
+    age_groups = temp_df.groupby('Age')['Data'].agg(['mean', 'count']).reset_index()
+    age_groups = age_groups.sort_values(by='Age').to_dict('records')
+
+    clinical_cuts = []
     idades_sugeridas = []
 
-    if clinical_candidates:
-        clinical_candidates = sorted(clinical_candidates, key=lambda x: x['age'])
-        clusters_clinicos = []
-        current_cluster = [clinical_candidates[0]]
-
-        for i in range(1, len(clinical_candidates)):
-            cut = clinical_candidates[i]
-            prev_cut = current_cluster[-1]
-
-            # Agrupa idades que estão próximas (Zona de transição biológica)
-            if cut['age'] - prev_cut['age'] <= 2:
-                current_cluster.append(cut)
+    if age_groups:
+        current_bracket_means = [age_groups[0]['mean']]
+        
+        for i in range(1, len(age_groups)):
+            current_age_data = age_groups[i]
+            reference_mean = np.mean(current_bracket_means)
+            
+            # Calcula o desvio percentual do ano atual contra a estabilidade do platô vigente
+            pct_diff = abs(current_age_data['mean'] - reference_mean) / reference_mean if reference_mean > 0 else 0
+            
+            # Se romper a barreira do CV e houver amostragem mínima para o ano (evita ruído)
+            if pct_diff > cv_tolerance_margin and current_age_data['count'] >= 5:
+                cutoff_age = int(age_groups[i-1]['Age'])
+                
+                # Reconstrói as métricas populacionais antes e depois do corte biológico para a tabela
+                m_less = temp_df[temp_df['Age'] <= cutoff_age]['Data'].mean()
+                m_greater = temp_df[temp_df['Age'] > cutoff_age]['Data'].mean()
+                
+                clinical_cuts.append({
+                    'age': cutoff_age,
+                    'Age Cutoff': f"<= {cutoff_age} vs > {cutoff_age}",
+                    'Justification': 'Equivalência Clínica (CV)',
+                    'Diff %': round(pct_diff * 100, 2),
+                    'Mean (<= Cutoff)': round(m_less, 2),
+                    'Mean (> Cutoff)': round(m_greater, 2)
+                })
+                idades_sugeridas.append(cutoff_age)
+                # Reinicia a estabilidade biológica a partir desta nova idade cronológica
+                current_bracket_means = [current_age_data['mean']]
             else:
-                clusters_clinicos.append(current_cluster)
-                current_cluster = [cut]
-        clusters_clinicos.append(current_cluster)
+                # Permanece na mesma fase fisiológica, incorporando o ano ao platô
+                current_bracket_means.append(current_age_data['mean'])
 
-        # Elege o ano daquela fase da vida que teve o MAIOR SALTO PERCENTUAL nas médias
-        ideal_cuts_list = [max(cluster, key=lambda x: x['pct_diff']) for cluster in clusters_clinicos]
-        df_ideal = pd.DataFrame(ideal_cuts_list).sort_values(by='age')
-        idades_sugeridas = [c['age'] for c in ideal_cuts_list]
+    df_ideal = pd.DataFrame(clinical_cuts).sort_values(by='age') if clinical_cuts else pd.DataFrame()
 
     return df_possible, df_ideal, idades_sugeridas
 
