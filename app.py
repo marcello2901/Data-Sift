@@ -1048,7 +1048,6 @@ def main():
                                 st.markdown(f"<p style='font-weight:bold; font-size:0.95rem; color:#073B4C; margin-bottom:2px;'>{r}</p>", unsafe_allow_html=True)
 
                 with col_hboyd:
-                    st.markdown('<div class="mini-card-dark" style="overflow: hidden;">', unsafe_allow_html=True)
                     st.markdown('<div class="card-header-bar" style="margin: -1rem -1rem 1rem -1rem; border-radius: 5px 5px 0 0; padding: 10px 15px; font-size: 1.1rem; text-align: center;">Stratification Studies</div>', unsafe_allow_html=True)
                     
                     with st.spinner("Calculating..."):
