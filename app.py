@@ -1114,7 +1114,7 @@ def main():
                     st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold; margin-bottom: 2px;'>1. Statistical approach (Harris-Boyd)</h4>", unsafe_allow_html=True)
                     st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Displays all candidate ages where the Z-test or Standard Deviation Ratio detects pure statistical significance for classification.</p>", unsafe_allow_html=True)
                     
-                    cols_to_show_pos = ['Age Cutoff', 'Justification', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                    cols_to_show_pos = ['Age Cutoff', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
                     if group_by_sex_plot: cols_to_show_pos.insert(0, 'Sex')
                     st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
 
