@@ -1004,7 +1004,7 @@ def main():
                             # -------------------------------------------------
                             sex_options_hboyd = [v for v in sex_column_values if v]
                             for sex_val in sex_options_hboyd:
-                                st.markdown(f"<hr style='border-color: rgba(255,255,255,0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:white; margin-bottom:2px;'><b>Sex: {sex_val}</b></p>", unsafe_allow_html=True)
+                                st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {sex_val}</b></p>", unsafe_allow_html=True)
                                 sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)].copy()
 
                                 if sub_df.empty:
