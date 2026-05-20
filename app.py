@@ -1110,21 +1110,24 @@ def main():
                 st.markdown("<div style='margin-top: 35px;'></div>", unsafe_allow_html=True)
                 
                 if not df_possiveis_global.empty:
-                    # --- QUADRO 1: ABORDAGEM ESTATÍSTICA ---
-                    st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold; margin-bottom: 2px;'>1. Statistical approach (Harris-Boyd)</h4>", unsafe_allow_html=True)
-                    st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Displays all candidate ages where the Z-test or Standard Deviation Ratio detects pure statistical significance for classification.</p>", unsafe_allow_html=True)
-                    
-                    cols_to_show_pos = ['Age Cutoff', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                    if group_by_sex_plot: cols_to_show_pos.insert(0, 'Sex')
-                    st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
+                    # --- GAVETA OCULTA PARA AS TABELAS DETALHADAS ---
+                    with st.expander("📊 View Detailed Stratification Data Tables", expanded=False):
+                        
+                        # --- QUADRO 1: ABORDAGEM ESTATÍSTICA ---
+                        st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold; margin-top: 10px; margin-bottom: 2px;'>1. Statistical approach (Harris-Boyd)</h4>", unsafe_allow_html=True)
+                        st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Displays all candidate ages where the Z-test or Standard Deviation Ratio detects pure statistical significance for classification.</p>", unsafe_allow_html=True)
+                        
+                        cols_to_show_pos = ['Age Cutoff', 'Justification', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                        if group_by_sex_plot: cols_to_show_pos.insert(0, 'Sex')
+                        st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
 
-                    # --- QUADRO 2: ABORDAGEM PRÁTICA ---
-                    st.markdown("<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top: 30px; margin-bottom: 2px;'>2. Practical approach (Equivalence limits)</h4>", unsafe_allow_html=True)
-                    st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Ideal cut-offs proposed after grouping close ages that do not exceed the Coefficient of Variation (CV) limit.</p>", unsafe_allow_html=True)
-                    
-                    cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                    if group_by_sex_plot: cols_to_show_ideal.insert(0, 'Sex')
-                    st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
+                        # --- QUADRO 2: ABORDAGEM PRÁTICA ---
+                        st.markdown("<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top: 30px; margin-bottom: 2px;'>2. Practical approach (Equivalence limits)</h4>", unsafe_allow_html=True)
+                        st.markdown("<p style='font-size:0.88rem; color:#666; margin-bottom:12px;'>Ideal cut-offs proposed after grouping close ages that do not exceed the Coefficient of Variation (CV) limit.</p>", unsafe_allow_html=True)
+                        
+                        cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                        if group_by_sex_plot: cols_to_show_ideal.insert(0, 'Sex')
+                        st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
                 
                 else:
                     st.info("The statistical model did not find sufficient variance to justify creating age ranges based on this data.")
