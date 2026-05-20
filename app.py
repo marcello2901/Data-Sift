@@ -505,29 +505,21 @@ def run_harris_boyd(df, col_idade, col_dados):
         try: return float(x)
         except: return np.nan
 
-    # Forçando float64 para evitar o erro de 'category'
     temp_df['Data'] = df[col_dados].apply(clean_val).astype('float64')
-    
-    # Expurgo seguro
     temp_df = temp_df.dropna(subset=['Age', 'Data'])
     temp_df = temp_df[temp_df['Age'] >= 0].copy()
 
-    # --- VERIFICAÇÃO DE DADOS MÍNIMOS ---
     if temp_df.empty:
-        return "No stratification recommended (Insufficient data).", pd.DataFrame(), []
+        return pd.DataFrame(), pd.DataFrame(), []
 
-    # DEFINIÇÃO OBRIGATÓRIA DA VARIÁVEL
     max_age = int(temp_df['Age'].max())
-    
-    # Validação de variação de idade
     if max_age < 1:
-        return "No stratification recommended (Insufficient age variation).", pd.DataFrame(), []
+        return pd.DataFrame(), pd.DataFrame(), []
 
     # =========================================================================
-    # FASE 1 — DETECÇÃO DE CORTES CANDIDATOS (Harris-Boyd)
-    # Calculando diretamente sobre a escala original
+    # QUADRO 1 — DETECÇÃO PURA DE HARRIS-BOYD (Estatísticas Possíveis)
     # =========================================================================
-    valid_cuts = []
+    possible_cuts = []
     for age_cutoff in range(1, max_age):
         mask_g1 = temp_df['Age'] <= age_cutoff
         mask_g2 = temp_df['Age'] > age_cutoff
@@ -542,156 +534,74 @@ def run_harris_boyd(df, col_idade, col_dados):
         var1,  var2  = np.var(g1, ddof=1), np.var(g2, ddof=1)
         sd1,   sd2   = np.sqrt(var1), np.sqrt(var2)
 
-        # ... (cálculos anteriores de n1, n2, mean1, mean2, var1, var2, sd1, sd2)
-
         sd_ratio = max(sd1, sd2) / min(sd1, sd2) if min(sd1, sd2) > 0 else 0
         den_z = np.sqrt((var1 / n1) + (var2 / n2)) if (var1 / n1) + (var2 / n2) > 0 else 0.0001
         z = abs(mean1 - mean2) / den_z
         z_crit = 3 * np.sqrt((n1 + n2) / 120) if (n1 + n2) < 120 else 3
 
-        # Critério de Harris-Boyd:
         partition_by_sd   = sd_ratio > 1.5
-        partition_by_mean = z > z_crit       # Removido o filtro de Cohen's d (d_value > 0.25)
+        partition_by_mean = z > z_crit
         should_partition  = partition_by_sd or partition_by_mean
 
         if should_partition:
-            just = (
-                'Standard Deviation' if partition_by_sd and not partition_by_mean
-                else ('Mean' if partition_by_mean and not partition_by_sd else 'Both')
-            )
-            valid_cuts.append({
-                'age': age_cutoff, 'justificativa': just,
-                'sd_ratio': sd_ratio,
-                'mean1': mean1, 'mean2': mean2, 'n1': n1, 'n2': n2,
-                'Age Cutoff':         f"<= {age_cutoff} vs > {age_cutoff}",
-                'Justification':      just,
-                'SD Ratio':           round(sd_ratio, 3),
-                'Mean (<= Cutoff)':   round(mean1, 2),
-                'Mean (> Cutoff)':    round(mean2, 2),
+            just = 'Standard Deviation' if partition_by_sd and not partition_by_mean else ('Mean' if partition_by_mean and not partition_by_sd else 'Both')
+            possible_cuts.append({
+                'age': age_cutoff,
+                'z_value': z,
+                'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
+                'Justification': just,
+                'Z-score': round(z, 2),
+                'SD Ratio': round(sd_ratio, 2),
+                'Mean (<= Cutoff)': round(mean1, 2),
+                'Mean (> Cutoff)': round(mean2, 2)
             })
 
-    if not valid_cuts:
-        return (
-            "The statistical model found no clinical necessity or sufficient variance "
-            "to recommend age-based reference intervals for this analyte.",
-            pd.DataFrame(), []
-        )
+    if not possible_cuts:
+        return pd.DataFrame(), pd.DataFrame(), []
 
-    valid_cuts = sorted(valid_cuts, key=lambda x: x['age'])
+    # Correção do método do pandas para ordenação
+    df_possible = pd.DataFrame(possible_cuts).sort_values(by='age')
+
+    # =========================================================================
+    # QUADRO 2 — INTERVALO DE EQUIVALÊNCIA PELO CV CLÍNICO (Cortes Ideais)
+    # =========================================================================
+    # Buscamos o fator dinâmico baseado na variabilidade natural da população
+    # Como não temos uma entrada fixa para o CV na interface, estipulamos uma margem 
+    # de tolerância clínica padrão baseada em metade do CV global medido nos dados brutos.
+    global_mean = temp_df['Data'].mean()
+    global_sd = temp_df['Data'].std(ddof=1)
+    global_cv = (global_sd / global_mean) if global_mean > 0 else 0.10
     
-    # =========================================================================
-    # FASE 2 — CLUSTERIZAÇÃO DINÂMICA (BASEADA NO COEFICIENTE DE VARIAÇÃO)
-    # A margem de equivalência clínica passa a ser desenhada sob medida.
-    # =========================================================================
-    MIN_INTERMEDIATE_N = 10
-    CV_TOLERANCE_FACTOR = 0.50 
+    # 50% do CV global serve como régua adaptativa automática para o analito
+    cv_tolerance_margin = global_cv * 0.50 
 
-    def is_clinically_different_dynamic(vals_ref, vals_test):
-        if len(vals_ref) < 2 or len(vals_test) < 2:
-            return False
-        
-        mean_ref = np.mean(vals_ref)
-        mean_test = np.mean(vals_test)
-        sd_ref = np.std(vals_ref, ddof=1)
-        
-        cv_ref = sd_ref / mean_ref if mean_ref > 0 else 0
-        dynamic_margin = cv_ref * CV_TOLERANCE_FACTOR
-        
-        diff_absoluta = abs(mean_ref - mean_test)
-        limite_equivalencia = mean_ref * dynamic_margin
-        
-        return diff_absoluta > limite_equivalencia
+    clusters = []
+    # Ordena a lista nativa antes de clusterizar
+    possible_cuts = sorted(possible_cuts, key=lambda x: x['age'])
+    current_cluster = [possible_cuts[0]]
 
-    clusters        = []
-    current_cluster = [valid_cuts[0]]
-
-    for i in range(1, len(valid_cuts)):
-        cut      = valid_cuts[i]
+    for i in range(1, len(possible_cuts)):
+        cut = possible_cuts[i]
         prev_cut = current_cluster[-1]
 
-        mask_mid = (temp_df['Age'] > prev_cut['age']) & (temp_df['Age'] <= cut['age'])
-        mid_vals_orig    = temp_df[mask_mid]['Data'].values
-        before_vals_orig = temp_df[temp_df['Age'] <= prev_cut['age']]['Data'].values
-        after_vals_orig  = temp_df[temp_df['Age'] >  cut['age']]['Data'].values
-
-        if len(mid_vals_orig) < MIN_INTERMEDIATE_N:
+        # Calcula o impacto clínico percentual da transição entre os cortes vizinhos
+        pct_diff = abs(cut['Mean (<= Cutoff)'] - prev_cut['Mean (<= Cutoff)']) / prev_cut['Mean (<= Cutoff)'] if prev_cut['Mean (<= Cutoff)'] > 0 else 0
+        
+        if pct_diff <= cv_tolerance_margin:
             current_cluster.append(cut)
-            continue
-
-        is_diff_from_left  = is_clinically_different_dynamic(before_vals_orig, mid_vals_orig)
-        is_diff_from_right = is_clinically_different_dynamic(after_vals_orig, mid_vals_orig)
-
-        if is_diff_from_left and is_diff_from_right:
+        else:
             clusters.append(current_cluster)
             current_cluster = [cut]
-        else:
-            current_cluster.append(cut)
+    clusters.append(current_cluster)
 
-    if current_cluster:
-        clusters.append(current_cluster)
+    # Seleção do melhor representante por pico de Z-score (Antiga Fase 3 unificada)
+    ideal_cuts_list = [max(cluster, key=lambda x: x['z_value']) for cluster in clusters]
+    df_ideal = pd.DataFrame(ideal_cuts_list).sort_values(by='age')
+    
+    # Lista limpa de idades sugeridas para atualizar os gráficos e o gerador de planilhas
+    idades_sugeridas = [c['age'] for c in ideal_cuts_list]
 
-    # =========================================================================
-    # FASE 3 — SELEÇÃO DO MELHOR REPRESENTANTE POR CLUSTER
-    # =========================================================================
-    best_cuts = [max(cluster, key=lambda x: x['d_value']) for cluster in clusters]
-    best_cuts = sorted(best_cuts, key=lambda x: x['age'])
-
-    # =========================================================================
-    # FASE 4 — GERAÇÃO DO LAUDO
-    # =========================================================================
-    texto_laudo  = "### 💡 Practical Stratification Suggestion\n"
-    texto_laudo += (
-        f"The algorithm analyzed the means and data dispersion and detected "
-        f"**{'1 point' if len(best_cuts) == 1 else str(len(best_cuts)) + ' points'}** "
-        f"of significant clinical change across ages:\n\n"
-    )
-
-    last_age = 0
-    for i, cut in enumerate(best_cuts):
-        idade_corte, m1, m2 = cut['age'], cut['mean1'], cut['mean2']
-        faixa = (
-            f"From {last_age} to {idade_corte} years" if i == 0
-            else f"From {last_age + 1} to {idade_corte} years"
-        )
-        texto_laudo += f"**{i+1}. Group {faixa} (Approx. Mean: {m1:.1f})**\n🔹 *Why separate?* "
-        if cut['justificativa'] == 'Mean':
-            texto_laudo += (
-                f"In this life stage, there is a significant change in central tendency "
-                f"compared to the rest of the population (jump to {m2:.1f}). \n\n"
-            )
-        elif cut['justificativa'] == 'Standard Deviation':
-            texto_laudo += (
-                "This age group presents a very different variability (data dispersion) "
-                "compared to other ages. \n\n"
-            )
-        else:
-            texto_laudo += (
-                f"This age group has a unique behavior, both due to a different mean "
-                f"(jump to {m2:.1f}) and high data dispersion. \n\n"
-            )
-        last_age = idade_corte
-
-    texto_laudo += (
-        f"**{len(best_cuts)+1}. Group from {last_age + 1} years onwards "
-        f"(Approx. Mean: {best_cuts[-1]['mean2']:.1f})**\n"
-        f"🔹 From this barrier onwards, the model considers that the results tend to "
-        f"stabilize statistically, forming the main reference range for reports.\n"
-    )
-
-    idades_sugeridas = [c['age'] for c in best_cuts]
-    raw_data_list = [{
-        'Recommendation':    '⭐ Suggested' if cut['age'] in idades_sugeridas else '',
-        'Age Cutoff':        cut['Age Cutoff'],
-        'Justification':     cut['Justification'],
-        'D-value':           cut['D-value'],
-        'SD Ratio':          cut['SD Ratio'],
-        'Mean (<= Cutoff)':  cut['Mean (<= Cutoff)'],
-        'Mean (> Cutoff)':   cut['Mean (> Cutoff)'],
-        'N (<= Cutoff)':     cut['n1'],
-        'N (> Cutoff)':      cut['n2'],
-    } for cut in valid_cuts]
-
-    return texto_laudo, pd.DataFrame(raw_data_list), idades_sugeridas
+    return df_possible, df_ideal, idades_sugeridas
 
 @st.cache_data(show_spinner=False)
 def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_type, group_by_sex, selected_sexes, show_trendlines):
@@ -1008,7 +918,7 @@ def main():
             st.download_button("⬇️ Download Final Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True, type="secondary")
         st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- ABA 2: ANÁLISE VISUO-ESTATÍSTICA E ESTRATIFICAÇÃO ---
+   # --- ABA 2: ANÁLISE VISUO-ESTATÍSTICA E ESTRATIFICAÇÃO ---
     with tab_stratify:
         st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
         st.markdown(f'<div class="card-header-bar">Visual-Statistical Analysis and Stratification</div>', unsafe_allow_html=True)
@@ -1020,26 +930,22 @@ def main():
             else:
                 col_grafico, col_hboyd = st.columns([3, 1], gap="large")
                 
-                # Variáveis capturadas para repasse ao mini-card de Harris Boyd
                 group_by_sex_plot = False
                 selected_sexes_for_plot = []
 
                 with col_grafico:
-                    gc1, gc2, gc3, gc4 = st.columns(4)
-                    chart_type = gc1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed")
-                    intervalo_plot = gc2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", help="Age interval in years")
+                    c1, c2, c3, c4, c5 = st.columns([1, 1, 0.9, 0.1, 1])
+                    
+                    chart_type = c1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed")
+                    intervalo_plot = c2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", help="Age interval in years")
                     
                     show_trendlines = False
-
                     if chart_type in ['Moving Average', 'Moving Median']:
-                        gc3.markdown(
-                            f"<div style='font-size: 14px; font-weight: normal; color: inherit; margin-bottom: 4px; display: inline-block;'>Plateau Lines {HELP_ICON}</div>", 
-                            unsafe_allow_html=True
-                        )
-                        show_trendlines = gc3.checkbox("Plateau Lines", value=True, label_visibility="collapsed")
+                        show_trendlines = c3.checkbox("Plateau Lines", value=True)
+                        c4.markdown(f"<div style='margin-top: 28px; margin-left: -10px;'>{HELP_ICON}</div>", unsafe_allow_html=True)
                         
                     if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
-                        group_by_sex_plot = gc4.checkbox("Group by Sex", value=False)
+                        group_by_sex_plot = c5.checkbox("Group by Sex", value=False)
                         sex_options_for_plot = [v for v in sex_column_values if v]
                     
                         selected_sexes_for_plot = st.multiselect(
@@ -1064,37 +970,40 @@ def main():
                     
                     with st.spinner("Calculating..."):
                         if group_by_sex_plot and st.session_state.col_sexo:
-                            # Loop estratificando por sexo caso a checkbox esteja ativa
+                            # -------------------------------------------------
+                            # CENÁRIO A: ESTRATIFICADO POR SEXO
+                            # -------------------------------------------------
                             sex_options_hboyd = [v for v in sex_column_values if v]
                             all_raw_dfs = []
                             for sex_val in sex_options_hboyd:
                                 st.markdown(f"<p style='font-size:0.95rem; color:#A6DCEF; margin-bottom:2px; margin-top:10px;'><b>Sex: {sex_val}</b></p>", unsafe_allow_html=True)
-                                sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)]
+                                sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)].copy()
 
                                 if sub_df.empty:
                                     st.markdown("<p style='font-weight:bold; font-size:1.0rem;'>No data</p>", unsafe_allow_html=True)
                                     continue
 
-                                _, raw_df, cuts = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados)
+                                df_possiveis, df_ideais, cuts = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados)
 
-                                # Pega a idade máxima real deste subgrupo
                                 max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max()) if not sub_df.empty else 100
 
-                                if not cuts:
+                                if df_possiveis.empty:
                                     st.markdown("<p style='font-weight:bold; font-size:0.9rem;'>No stratification needed</p>", unsafe_allow_html=True)
                                 else:
+                                    # Mostra os grupos sugeridos em faixas de idade legíveis
                                     last_age = 0
                                     for cut in cuts:
                                         st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY};'>{last_age} - {cut} years</p>", unsafe_allow_html=True)
                                         last_age = cut + 1
                                     st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY};'>{last_age} - {max_age_sub} years</p>", unsafe_allow_html=True)
 
-                                if not raw_df.empty:
-                                    raw_df.insert(0, 'Sex', str(sex_val))
-                                    all_raw_dfs.append(raw_df)
+                                if not df_ideais.empty:
+                                    df_ideais.insert(0, 'Sex', str(sex_val))
+                                    all_raw_dfs.append(df_ideais)
 
                             st.markdown("</div>", unsafe_allow_html=True)
 
+                            # Expander para ver as tabelas completas de dados do subgrupo
                             with st.expander("View Full Statistical Data", expanded=False):
                                 if all_raw_dfs:
                                     st.dataframe(pd.concat(all_raw_dfs, ignore_index=True), use_container_width=True, hide_index=True)
@@ -1102,15 +1011,16 @@ def main():
                                     st.write("Insufficient variance data.")
 
                         else:
-                            # Visão normal/geral, sem estratificar por sexo no mini-card
-                            texto_interpretativo, raw_df, cuts = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
+                            # -------------------------------------------------
+                            # CENÁRIO B: VISÃO GERAL (O bloco que você postou)
+                            # -------------------------------------------------
+                            df_possiveis, df_ideais, cuts = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados)
                             
-                            # Pega a idade máxima geral da planilha
                             max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max()) if df is not None else 100
                             
                             st.markdown("<p style='font-size:0.85rem; color:#A6DCEF; margin-bottom:5px;'>Recommended Age Groups:</p>", unsafe_allow_html=True)
                             
-                            if not cuts:
+                            if df_possiveis.empty:
                                 st.markdown("<p style='font-weight:bold; font-size:1.1rem;'>No stratification needed</p>", unsafe_allow_html=True)
                             else:
                                 last_age = 0
@@ -1121,11 +1031,16 @@ def main():
                             
                             st.markdown("</div>", unsafe_allow_html=True)
                             
-                            with st.expander("View Full Statistical Data", expanded=False):
-                                if not raw_df.empty:
-                                    st.dataframe(raw_df, use_container_width=True, hide_index=True)
-                                else:
-                                    st.write("Insufficient variance data.")
+                            # AQUI entram os dois quadros detalhados pedidos, logo abaixo do card lateral
+                            st.markdown("<br>", unsafe_allow_html=True)
+                            if not df_possiveis.empty:
+                                st.markdown("<h4 style='color: #118AB2; font-size:1.1rem;'>1. Estatificações Possíveis (Harris-Boyd Puro)</h4>", unsafe_allow_html=True)
+                                cols_to_show_pos = ['Age Cutoff', 'Justification', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                                st.dataframe(df_possiveis[cols_to_show_pos], use_container_width=True, hide_index=True)
+
+                                st.markdown("<h4 style='color: #073B4C; font-size:1.1rem; margin-top: 15px;'>2. Cortes Ideais (Filtro por Equivalência)</h4>", unsafe_allow_html=True)
+                                cols_to_show_ideal = ['Age Cutoff', 'Justification', 'Z-score', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                                st.dataframe(df_ideais[cols_to_show_ideal], use_container_width=True, hide_index=True)
 
                 # --- SEÇÃO DE ESTRATIFICAÇÃO (Geração de Planilhas) ---
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2rem 0;'>", unsafe_allow_html=True)
