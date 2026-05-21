@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Version 3.4.2 (Fixed UI State Loss on Dynamic Matrix Deletion & Full English)
+# Version 3.5.0 (State Buffer Architecture & Explicit Analysis Processing)
 import streamlit as st
 import pandas as pd
 from scipy import stats
@@ -957,6 +957,7 @@ def main():
         def reset_results_on_upload():
             if 'filtered_result' in st.session_state: del st.session_state['filtered_result']
             if 'stratified_results' in st.session_state: del st.session_state['stratified_results']
+            if 'analysis_params' in st.session_state: del st.session_state['analysis_params']
             st.session_state.confirm_stratify = False
             
         uploaded_file = st.file_uploader("Select spreadsheet", type=['csv', 'xlsx', 'xls', 'zip'], on_change=reset_results_on_upload, key="file_uploader_widget", label_visibility="collapsed")
@@ -1050,156 +1051,177 @@ def main():
             else:
                 st.markdown("#### ⚙️ Clinical Reference Boundaries Configuration")
                 draw_reference_limits_matrix(sex_column_values)
-                st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 15px 0 25px 0;'>", unsafe_allow_html=True)
+                st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 15px 0;'>", unsafe_allow_html=True)
 
-                col_grafico, col_hboyd = st.columns([2.8, 1.2], gap="large")
+                st.markdown("#### 📈 Visual & Analytical Settings")
+                c1, c2, c3, c4, c5 = st.columns([1.5, 1.5, 0.5, 1.5, 2])
+                chart_type = c1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed", key="chart_type_sel")
+                intervalo_plot = c2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", key="age_int_num")
+                
+                show_trendlines = False
+                if chart_type in ['Moving Average', 'Moving Median']:
+                    show_trendlines = c3.checkbox("chk_plateau", value=True, label_visibility="collapsed", key="trend_chk")
+                    c4.markdown(f"<div style='font-size: 1rem; color: inherit; margin-top: 5px; margin-left: -15px;'>Plateau Lines {HELP_ICON}</div>", unsafe_allow_html=True)
+                    
                 group_by_sex_plot = False
                 selected_sexes_for_plot = []
-
-                with col_grafico:
-                    c1, c2, c3, c4, c5 = st.columns([1, 1, 0.15, 0.85, 1])
-                    chart_type = c1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed", key="chart_type_sel")
-                    intervalo_plot = c2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", key="age_int_num")
-                    
-                    show_trendlines = False
-                    if chart_type in ['Moving Average', 'Moving Median']:
-                        show_trendlines = c3.checkbox("chk_plateau", value=True, label_visibility="collapsed", key="trend_chk")
-                        c4.markdown(f"<div style='font-size: 1rem; color: inherit; margin-top: 5px; margin-left: -15px;'>Plateau Lines {HELP_ICON}</div>", unsafe_allow_html=True)
-                        
-                    if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
-                        group_by_sex_plot = c5.checkbox("Group by Sex", value=False, key="grp_sex_chk")
-                        sex_options_for_plot = [v for v in sex_column_values if v]
+                if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
+                    group_by_sex_plot = c5.checkbox("Group by Sex", value=False, key="grp_sex_chk")
+                    sex_options_for_plot = [v for v in sex_column_values if v]
+                    if group_by_sex_plot:
                         selected_sexes_for_plot = st.multiselect("Filter specific sexes:", options=sex_options_for_plot, default=sex_options_for_plot, key="flt_sex_multi")
                         if not selected_sexes_for_plot: selected_sexes_for_plot = sex_options_for_plot
+                    else:
+                        selected_sexes_for_plot = sex_options_for_plot
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("🚀 Process Analysis & Generate Charts", type="primary", use_container_width=True):
+                    st.session_state.analysis_params = {
+                        'chart_type': chart_type,
+                        'intervalo_plot': intervalo_plot,
+                        'show_trendlines': show_trendlines,
+                        'group_by_sex_plot': group_by_sex_plot,
+                        'selected_sexes_for_plot': selected_sexes_for_plot,
+                        'ref_limits_list': copy.deepcopy(st.session_state.ref_limits_list)
+                    }
+
+                # =========================================================================
+                # PROTECTED EXECUTION BLOCK (Only runs when analysis_params exist in state)
+                # =========================================================================
+                if 'analysis_params' in st.session_state:
+                    p = st.session_state.analysis_params
+                    st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 25px 0;'>", unsafe_allow_html=True)
                     
-                    fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, intervalo_plot, chart_type, group_by_sex_plot, selected_sexes_for_plot, show_trendlines, st.session_state.ref_limits_list)
-                    if fig: st.pyplot(fig)
+                    col_grafico, col_hboyd = st.columns([2.8, 1.2], gap="large")
 
-                df_possiveis_global_list = []
-                df_ideais_global_list = []
-                any_haeckel_activated_at_all = False
+                    with col_grafico:
+                        fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'])
+                        if fig: st.pyplot(fig)
 
-                with col_hboyd:
-                    st.markdown('<div class="card-header-bar" style="margin: -1rem -1rem 1rem -1rem; border-radius: 5px 5px 0 0; padding: 10px 15px; font-size: 1.1rem; text-align: center;">Stratification Studies</div>', unsafe_allow_html=True)
-                    
-                    with st.spinner("Calculating..."):
-                        if group_by_sex_plot and st.session_state.col_sexo:
-                            sex_options_hboyd = [v for v in sex_column_values if v]
-                            for sex_val in sex_options_hboyd:
-                                st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {sex_val}</b></p>", unsafe_allow_html=True)
-                                sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)].copy()
-                                if sub_df.empty: continue
+                    df_possiveis_global_list = []
+                    df_ideais_global_list = []
+                    any_haeckel_activated_at_all = False
 
-                                df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.ref_limits_list, str(sex_val))
+                    with col_hboyd:
+                        st.markdown('<div class="card-header-bar" style="margin: -1rem -1rem 1rem -1rem; border-radius: 5px 5px 0 0; padding: 10px 15px; font-size: 1.1rem; text-align: center;">Stratification Studies</div>', unsafe_allow_html=True)
+                        
+                        with st.spinner("Calculating..."):
+                            if p['group_by_sex_plot'] and st.session_state.col_sexo:
+                                sex_options_hboyd = [v for v in sex_column_values if v]
+                                for sex_val in sex_options_hboyd:
+                                    if sex_val not in p['selected_sexes_for_plot']: continue
+                                    st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {sex_val}</b></p>", unsafe_allow_html=True)
+                                    sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)].copy()
+                                    if sub_df.empty: continue
+
+                                    df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], str(sex_val))
+                                    if h_activated: any_haeckel_activated_at_all = True
+                                    
+                                    max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max())
+                                    titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
+                                    
+                                    render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_sub)
+                                    render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_sub)
+
+                                    if not df_possiveis.empty:
+                                        df_p = df_possiveis.copy(); df_p.insert(0, 'Sex', str(sex_val)); df_possiveis_global_list.append(df_p)
+                                    if not df_ideais.empty:
+                                        df_i = df_ideais.copy(); df_i.insert(0, 'Sex', str(sex_val)); df_ideais_global_list.append(df_i)
+                            else:
+                                df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], "All")
                                 if h_activated: any_haeckel_activated_at_all = True
-                                
-                                max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max())
-                                
+                                max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
                                 titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
                                 
-                                render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_sub)
-                                render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_sub)
+                                render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_full)
+                                render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_full)
 
-                                if not df_possiveis.empty:
-                                    df_p = df_possiveis.copy(); df_p.insert(0, 'Sex', str(sex_val)); df_possiveis_global_list.append(df_p)
-                                if not df_ideais.empty:
-                                    df_i = df_ideais.copy(); df_i.insert(0, 'Sex', str(sex_val)); df_ideais_global_list.append(df_i)
-                        else:
-                            df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.ref_limits_list, "All")
-                            if h_activated: any_haeckel_activated_at_all = True
-                            max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
+                                if not df_possiveis.empty: df_possiveis_global_list.append(df_possiveis)
+                                if not df_ideais.empty: df_ideais_global_list.append(df_ideais)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                    # =========================================================================
+                    # MULTIPARAMETRIC HAECKEL AUDIT TABLES
+                    # =========================================================================
+                    st.markdown("<div style='margin-top: 35px;'></div>", unsafe_allow_html=True)
+                    valid_haeckel_rows = [r for r in p['ref_limits_list'] if r.get('lri') is not None and r.get('lrs') is not None]
+                    
+                    if valid_haeckel_rows:
+                        with st.expander("🔬 Calculation Audit Table - Haeckel (State-of-the-Art Structural View)", expanded=True):
+                            st.markdown("<p style='font-size:0.9rem; color:#666;'>Verifiable mirror containing the thorough step-by-step math performed to obtain performance limits.</p>", unsafe_allow_html=True)
                             
-                            titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
-                            
-                            render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_full)
-                            render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_full)
+                            for r_item in valid_haeckel_rows:
+                                h = calcular_limites_haeckel(r_item['lri'], r_item['lrs'])
+                                if not h: continue
+                                
+                                faixa_etaria_label = f"{r_item['age_min']} to {r_item['age_max']} years" if (r_item['age_min'] is not None or r_item['age_max'] is not None) else "Global"
+                                st.markdown(f"<div style='background-color:#E0F7FA; padding:5px 10px; font-weight:bold; color:{COLOR_PRIMARY}; margin-top:20px; border-radius:4px; border-left: 5px solid {COLOR_TERTIARY};'>Target Subgroup: Sex [{r_item['sex']}] | Age [{faixa_etaria_label}]</div>", unsafe_allow_html=True)
+                                
+                                eq_lri_min = h['lri'] - (h['lri'] * h['m_lri']['pb']/100)
+                                eq_lri_max = h['lri'] + (h['lri'] * h['m_lri']['pb']/100)
+                                eq_lrs_min = h['lrs'] - (h['lrs'] * h['m_lrs']['pb']/100)
+                                eq_lrs_max = h['lrs'] + (h['lrs'] * h['m_lrs']['pb']/100)
+                                
+                                html_table = f"""
+                                <table style="width:100%; text-align:center; border-collapse: collapse; font-family: sans-serif; font-size:0.9rem; margin-top:5px; margin-bottom:20px;" border="1">
+                                    <tr style="background-color:{COLOR_PRIMARY}; color:white;">
+                                        <th colspan="2" style="padding:8px; border: 1px solid #CCC;">Comparative Reference Interval Input</th>
+                                        <th colspan="6" style="padding:8px; border: 1px solid #CCC;">Calculation of Analytical Performance Specification Limits (Haeckel)</th>
+                                    </tr>
+                                    <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
+                                        <td style="padding:6px; border: 1px solid #CCC;">LRI</td><td style="padding:6px; border: 1px solid #CCC;">LRS</td>
+                                        <td style="border: 1px solid #CCC;">CV<sub>E</sub></td><td style="border: 1px solid #CCC;">pCV<sub>A</sub></td><td style="border: 1px solid #CCC;">Med<sub>ln</sub></td><td style="border: 1px solid #CCC;">pS<sub>A,Med</sub></td><td style="border: 1px solid #CCC;">Slope</td><td style="border: 1px solid #CCC;">Intercept</td>
+                                    </tr>
+                                    <tr style="background-color:#FFFFFF;">
+                                        <td style="padding:8px; border: 1px solid #CCC;"><b>{h['lri']:.3f}</b></td><td style="padding:8px; border: 1px solid #CCC;"><b>{h['lrs']:.3f}</b></td>
+                                        <td style="border: 1px solid #CCC;">{h['cve']:.3f}%</td><td style="border: 1px solid #CCC;">{h['pcva']:.3f}%</td>
+                                        <td style="border: 1px solid #CCC;">{h['med']:.3f}</td><td style="border: 1px solid #CCC;">{h['psa_med']:.3f}</td>
+                                        <td style="border: 1px solid #CCC;">{h['slope']:.4f}</td><td style="border: 1px solid #CCC;">{h['intercept']:.4f}</td>
+                                    </tr>
+                                    <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
+                                        <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
+                                        <td colspan="2" style="padding:6px; border: 1px solid #CCC;">pS<sub>A,LRI</sub></td><td colspan="2" style="border: 1px solid #CCC;">pCV<sub>A,LRI</sub></td><td style="border: 1px solid #CCC;">pB<sub>LRI</sub></td><td style="border: 1px solid #CCC;">LRI Equivalence Bound Interval</td>
+                                    </tr>
+                                    <tr style="background-color:#FFFFFF;">
+                                        <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
+                                        <td colspan="2" style="padding:8px; border: 1px solid #CCC;">{h['m_lri']['psa']:.3f}</td>
+                                        <td colspan="2" style="border: 1px solid #CCC;">{h['m_lri']['pcva']:.3f}%</td>
+                                        <td style="border: 1px solid #CCC;">{h['m_lri']['pb']:.3f}%</td>
+                                        <td style="border: 1px solid #CCC;"><b>{eq_lri_min:.1f} to {eq_lri_max:.1f}</b></td>
+                                    </tr>
+                                    <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
+                                        <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
+                                        <td colspan="2" style="padding:6px; border: 1px solid #CCC;">pS<sub>A,LRS</sub></td><td colspan="2" style="border: 1px solid #CCC;">pCV<sub>A,LRS</sub></td><td style="border: 1px solid #CCC;">pB<sub>LRS</sub></td><td style="border: 1px solid #CCC;">LRS Equivalence Bound Interval</td>
+                                    </tr>
+                                    <tr style="background-color:#FFFFFF;">
+                                        <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
+                                        <td colspan="2" style="padding:8px; border: 1px solid #CCC;">{h['m_lrs']['psa']:.3f}</td>
+                                        <td colspan="2" style="border: 1px solid #CCC;">{h['m_lrs']['pcva']:.3f}%</td>
+                                        <td style="border: 1px solid #CCC;">{h['m_lrs']['pb']:.3f}%</td>
+                                        <td style="border: 1px solid #CCC;"><b>{eq_lrs_min:.1f} to {eq_lrs_max:.1f}</b></td>
+                                    </tr>
+                                </table>
+                                """
+                                st.markdown(html_table, unsafe_allow_html=True)
 
-                            if not df_possiveis.empty: df_possiveis_global_list.append(df_possiveis)
-                            if not df_ideais.empty: df_ideais_global_list.append(df_ideais)
-                    st.markdown("</div>", unsafe_allow_html=True)
+                    # =========================================================================
+                    # SUMMARY DETAILED BOTTOM TABLES
+                    # =========================================================================
+                    df_possiveis_global = pd.concat(df_possiveis_global_list, ignore_index=True) if df_possiveis_global_list else pd.DataFrame()
+                    df_ideais_global = pd.concat(df_ideais_global_list, ignore_index=True) if df_ideais_global_list else pd.DataFrame()
 
-                # =========================================================================
-                # MULTIPARAMETRIC HAECKEL AUDIT TABLES (RESTORED TO ORIGINAL STACKED MODEL WITH BLUE ACCENTS)
-                # =========================================================================
-                st.markdown("<div style='margin-top: 35px;'></div>", unsafe_allow_html=True)
-                valid_haeckel_rows = [r for r in st.session_state.ref_limits_list if r.get('lri') is not None and r.get('lrs') is not None]
-                
-                if valid_haeckel_rows:
-                    with st.expander("🔬 Calculation Audit Table - Haeckel (State-of-the-Art Structural View)", expanded=True):
-                        st.markdown("<p style='font-size:0.9rem; color:#666;'>Verifiable mirror containing the thorough step-by-step math performed to obtain performance limits.</p>", unsafe_allow_html=True)
-                        
-                        for r_item in valid_haeckel_rows:
-                            h = calcular_limites_haeckel(r_item['lri'], r_item['lrs'])
-                            if not h: continue
-                            
-                            faixa_etaria_label = f"{r_item['age_min']} to {r_item['age_max']} years" if (r_item['age_min'] is not None or r_item['age_max'] is not None) else "Global"
-                            st.markdown(f"<div style='background-color:#E2F0D9; padding:5px 10px; font-weight:bold; color:{COLOR_PRIMARY}; margin-top:20px; border-radius:4px; border-left: 5px solid #385723;'>Target Subgroup: Sex [{r_item['sex']}] | Age [{faixa_etaria_label}]</div>", unsafe_allow_html=True)
-                            
-                            eq_lri_min = h['lri'] - (h['lri'] * h['m_lri']['pb']/100)
-                            eq_lri_max = h['lri'] + (h['lri'] * h['m_lri']['pb']/100)
-                            eq_lrs_min = h['lrs'] - (h['lrs'] * h['m_lrs']['pb']/100)
-                            eq_lrs_max = h['lrs'] + (h['lrs'] * h['m_lrs']['pb']/100)
-                            
-                            html_table = f"""
-                            <table style="width:100%; text-align:center; border-collapse: collapse; font-family: sans-serif; font-size:0.9rem; margin-top:5px; margin-bottom:20px;" border="1">
-                                <tr style="background-color:{COLOR_PRIMARY}; color:white;">
-                                    <th colspan="2" style="padding:8px; border: 1px solid #CCC;">Comparative Reference Interval Input</th>
-                                    <th colspan="6" style="padding:8px; border: 1px solid #CCC;">Calculation of Analytical Performance Specification Limits (Haeckel)</th>
-                                </tr>
-                                <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
-                                    <td style="padding:6px; border: 1px solid #CCC;">LRI</td><td style="padding:6px; border: 1px solid #CCC;">LRS</td>
-                                    <td style="border: 1px solid #CCC;">CV<sub>E</sub></td><td style="border: 1px solid #CCC;">pCV<sub>A</sub></td><td style="border: 1px solid #CCC;">Med<sub>ln</sub></td><td style="border: 1px solid #CCC;">pS<sub>A,Med</sub></td><td style="border: 1px solid #CCC;">Slope</td><td style="border: 1px solid #CCC;">Intercept</td>
-                                </tr>
-                                <tr style="background-color:#FFFFFF;">
-                                    <td style="padding:8px; border: 1px solid #CCC;"><b>{h['lri']:.3f}</b></td><td style="padding:8px; border: 1px solid #CCC;"><b>{h['lrs']:.3f}</b></td>
-                                    <td style="border: 1px solid #CCC;">{h['cve']:.3f}%</td><td style="border: 1px solid #CCC;">{h['pcva']:.3f}%</td>
-                                    <td style="border: 1px solid #CCC;">{h['med']:.3f}</td><td style="border: 1px solid #CCC;">{h['psa_med']:.3f}</td>
-                                    <td style="border: 1px solid #CCC;">{h['slope']:.4f}</td><td style="border: 1px solid #CCC;">{h['intercept']:.4f}</td>
-                                </tr>
-                                <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
-                                    <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
-                                    <td colspan="2" style="padding:6px; border: 1px solid #CCC;">pS<sub>A,LRI</sub></td><td colspan="2" style="border: 1px solid #CCC;">pCV<sub>A,LRI</sub></td><td style="border: 1px solid #CCC;">pB<sub>LRI</sub></td><td style="border: 1px solid #CCC;">LRI Equivalence Bound Interval</td>
-                                </tr>
-                                <tr style="background-color:#FFFFFF;">
-                                    <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
-                                    <td colspan="2" style="padding:8px; border: 1px solid #CCC;">{h['m_lri']['psa']:.3f}</td>
-                                    <td colspan="2" style="border: 1px solid #CCC;">{h['m_lri']['pcva']:.3f}%</td>
-                                    <td style="border: 1px solid #CCC;">{h['m_lri']['pb']:.3f}%</td>
-                                    <td style="border: 1px solid #CCC;"><b>{eq_lri_min:.1f} to {eq_lri_max:.1f}</b></td>
-                                </tr>
-                                <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
-                                    <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
-                                    <td colspan="2" style="padding:6px; border: 1px solid #CCC;">pS<sub>A,LRS</sub></td><td colspan="2" style="border: 1px solid #CCC;">pCV<sub>A,LRS</sub></td><td style="border: 1px solid #CCC;">pB<sub>LRS</sub></td><td style="border: 1px solid #CCC;">LRS Equivalence Bound Interval</td>
-                                </tr>
-                                <tr style="background-color:#FFFFFF;">
-                                    <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
-                                    <td colspan="2" style="padding:8px; border: 1px solid #CCC;">{h['m_lrs']['psa']:.3f}</td>
-                                    <td colspan="2" style="border: 1px solid #CCC;">{h['m_lrs']['pcva']:.3f}%</td>
-                                    <td style="border: 1px solid #CCC;">{h['m_lrs']['pb']:.3f}%</td>
-                                    <td style="border: 1px solid #CCC;"><b>{eq_lrs_min:.1f} to {eq_lrs_max:.1f}</b></td>
-                                </tr>
-                            </table>
-                            """
-                            st.markdown(html_table, unsafe_allow_html=True)
+                    if not df_possiveis_global.empty:
+                        with st.expander("📊 View Detailed Stratification Data Tables", expanded=False):
+                            st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold;'>Harris-Boyd (Statistical approach)</h4>", unsafe_allow_html=True)
+                            cols_to_show_pos = ['Age Cutoff', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                            if p['group_by_sex_plot']: cols_to_show_pos.insert(0, 'Sex')
+                            st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
 
-                # =========================================================================
-                # SUMMARY DETAILED BOTTOM TABLES
-                # =========================================================================
-                df_possiveis_global = pd.concat(df_possiveis_global_list, ignore_index=True) if df_possiveis_global_list else pd.DataFrame()
-                df_ideais_global = pd.concat(df_ideais_global_list, ignore_index=True) if df_ideais_global_list else pd.DataFrame()
-
-                if not df_possiveis_global.empty:
-                    with st.expander("📊 View Detailed Stratification Data Tables", expanded=False):
-                        st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold;'>Harris-Boyd (Statistical approach)</h4>", unsafe_allow_html=True)
-                        cols_to_show_pos = ['Age Cutoff', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                        if group_by_sex_plot: cols_to_show_pos.insert(0, 'Sex')
-                        st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
-
-                        titulo_metodo_2_completo = "EDA Haeckel (Practical approach)" if any_haeckel_activated_at_all else "Empirical Analysis of Dispersion and Means (Empirical approach)"
-                        st.markdown(f"<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top:25px;'>{titulo_metodo_2_completo}</h4>", unsafe_allow_html=True)
-                        cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Limit Threshold', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                        if group_by_sex_plot: cols_to_show_ideal.insert(0, 'Sex')
-                        st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
+                            titulo_metodo_2_completo = "EDA Haeckel (Practical approach)" if any_haeckel_activated_at_all else "Empirical Analysis of Dispersion and Means (Empirical approach)"
+                            st.markdown(f"<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top:25px;'>{titulo_metodo_2_completo}</h4>", unsafe_allow_html=True)
+                            cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Limit Threshold', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                            if p['group_by_sex_plot']: cols_to_show_ideal.insert(0, 'Sex')
+                            st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
 
                 # --- SHEET PRODUCTION GENERATOR SECTION ---
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2.5rem 0;'>", unsafe_allow_html=True)
