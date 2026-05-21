@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Version 3.4.0 (Restored Stacked Table Design & Full English Internationalization)
+# Version 3.4.1 (Standardized Audit Table Colors, Stacked Layout & Full English UI)
 import streamlit as st
 import pandas as pd
 from scipy import stats
@@ -561,7 +561,7 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
     ordenados_por_max = sorted(com_idade, key=lambda x: x.get('age_max') if x.get('age_max') is not None else 9999, reverse=True)
     maior_idade = ordenados_por_max[0].get('age_max', 9999) if ordenados_por_max[0].get('age_max') is not None else 9999
     
-    if idade > maior_idade:
+    if width := idade > maior_idade:
         for o in ordenados_por_max:
             if str(o.get('sex', '')).strip().lower() == sexo_str: return o
         return ordenados_por_max[0]
@@ -923,7 +923,7 @@ def main():
     with st.sidebar:
         if logo_base64: st.markdown(f'<div style="display: flex; justify-content: center; margin-bottom: 1rem;"><img src="data:image/png;base64,{logo_base64}" width="150"></div>', unsafe_allow_html=True)
         st.markdown("---")
-        topic = st.selectbox("User Manual", list(MANUAL_CONTENT.keys()))
+        topic = st.selectbox("Select Screen Mode", list(MANUAL_CONTENT.keys()))
         st.markdown(MANUAL_CONTENT[topic], unsafe_allow_html=True)
 
     if logo_base64: st.markdown(f'<div style="display: flex; justify-content: center; margin-top: 1rem; margin-bottom: 2rem;"><img src="data:image/png;base64,{logo_base64}" width="220"></div>', unsafe_allow_html=True)
@@ -1095,7 +1095,7 @@ def main():
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 # =========================================================================
-                # MULTIPARAMETRIC HAECKEL AUDIT TABLES (RESTORED TO ORIGINAL STACKED MODEL)
+                # MULTIPARAMETRIC HAECKEL AUDIT TABLES (RESTORED TO ORIGINAL STACKED MODEL WITH BLUE ACCENTS)
                 # =========================================================================
                 st.markdown("<div style='margin-top: 35px;'></div>", unsafe_allow_html=True)
                 valid_haeckel_rows = [r for r in st.session_state.ref_limits_list if r.get('lri') is not None and r.get('lrs') is not None]
@@ -1109,7 +1109,7 @@ def main():
                             if not h: continue
                             
                             faixa_etaria_label = f"{r_item['age_min']} to {r_item['age_max']} years" if (r_item['age_min'] is not None or r_item['age_max'] is not None) else "Global"
-                            st.markdown(f"<div style='background-color:#E2F0D9; padding:5px 10px; font-weight:bold; color:{COLOR_PRIMARY}; margin-top:20px; border-radius:4px; border-left: 5px solid #385723;'>Target Subgroup: Sex [{r_item['sex']}] | Age [{faixa_etaria_label}]</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div style='background-color:#E0F7FA; padding:5px 10px; font-weight:bold; color:{COLOR_PRIMARY}; margin-top:20px; border-radius:4px; border-left: 5px solid {COLOR_TERTIARY};'>Target Subgroup: Sex [{r_item['sex']}] | Age [{faixa_etaria_label}]</div>", unsafe_allow_html=True)
                             
                             eq_lri_min = h['lri'] - (h['lri'] * h['m_lri']['pb']/100)
                             eq_lri_max = h['lri'] + (h['lri'] * h['m_lri']['pb']/100)
@@ -1124,7 +1124,7 @@ def main():
                                 </tr>
                                 <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
                                     <td style="padding:6px; border: 1px solid #CCC;">LRI</td><td style="padding:6px; border: 1px solid #CCC;">LRS</td>
-                                    <td style="border: 1px solid #CCC;">CV<sub>E</sub</td><td style="border: 1px solid #CCC;">pCV<sub>A</sub></td><td style="border: 1px solid #CCC;">Med<sub>ln</sub></td><td style="border: 1px solid #CCC;">pS<sub>A,Med</sub></td><td style="border: 1px solid #CCC;">Slope</td><td style="border: 1px solid #CCC;">Intercept</td>
+                                    <td style="border: 1px solid #CCC;">CV<sub>E</sub></td><td style="border: 1px solid #CCC;">pCV<sub>A</sub></td><td style="border: 1px solid #CCC;">Med<sub>ln</sub></td><td style="border: 1px solid #CCC;">pS<sub>A,Med</sub></td><td style="border: 1px solid #CCC;">Slope</td><td style="border: 1px solid #CCC;">Intercept</td>
                                 </tr>
                                 <tr style="background-color:#FFFFFF;">
                                     <td style="padding:8px; border: 1px solid #CCC;"><b>{h['lri']:.3f}</b></td><td style="padding:8px; border: 1px solid #CCC;"><b>{h['lrs']:.3f}</b></td>
@@ -1132,7 +1132,7 @@ def main():
                                     <td style="border: 1px solid #CCC;">{h['med']:.3f}</td><td style="border: 1px solid #CCC;">{h['psa_med']:.3f}</td>
                                     <td style="border: 1px solid #CCC;">{h['slope']:.4f}</td><td style="border: 1px solid #CCC;">{h['intercept']:.4f}</td>
                                 </tr>
-                                <tr style="background-color:#FFF9C4; font-weight:bold; color:{COLOR_PRIMARY};">
+                                <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
                                     <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
                                     <td colspan="2" style="padding:6px; border: 1px solid #CCC;">pS<sub>A,LRI</sub></td><td colspan="2" style="border: 1px solid #CCC;">pCV<sub>A,LRI</sub></td><td style="border: 1px solid #CCC;">pB<sub>LRI</sub></td><td style="border: 1px solid #CCC;">LRI Equivalence Bound Interval</td>
                                 </tr>
@@ -1143,7 +1143,7 @@ def main():
                                     <td style="border: 1px solid #CCC;">{h['m_lri']['pb']:.3f}%</td>
                                     <td style="border: 1px solid #CCC;"><b>{eq_lri_min:.1f} to {eq_lri_max:.1f}</b></td>
                                 </tr>
-                                <tr style="background-color:#FFF9C4; font-weight:bold; color:{COLOR_PRIMARY};">
+                                <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
                                     <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
                                     <td colspan="2" style="padding:6px; border: 1px solid #CCC;">pS<sub>A,LRS</sub></td><td colspan="2" style="border: 1px solid #CCC;">pCV<sub>A,LRS</sub></td><td style="border: 1px solid #CCC;">pB<sub>LRS</sub></td><td style="border: 1px solid #CCC;">LRS Equivalence Bound Interval</td>
                                 </tr>
