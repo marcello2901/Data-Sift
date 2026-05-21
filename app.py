@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Version 3.4.1 (Standardized Audit Table Colors, Stacked Layout & Full English UI)
+# Version 3.4.2 (Fixed UI State Loss on Dynamic Matrix Deletion & Full English)
 import streamlit as st
 import pandas as pd
 from scipy import stats
@@ -585,7 +585,7 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
     ordenados_por_max = sorted(com_idade, key=lambda x: x.get('age_max') if x.get('age_max') is not None else 9999, reverse=True)
     maior_idade = ordenados_por_max[0].get('age_max', 9999) if ordenados_por_max[0].get('age_max') is not None else 9999
     
-    if width := idade > maior_idade:
+    if idade > maior_idade:
         for o in ordenados_por_max:
             if str(o.get('sex', '')).strip().lower() == sexo_str: return o
         return ordenados_por_max[0]
@@ -682,7 +682,7 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
                 h_intercept = h_local['intercept']
                 psa_x = (h_slope * reference_mean) + h_intercept
                 
-                pd_margin = 1.645 * psa_x
+                pd_margin = 1.28 * psa_x
                 diff_absoluta = abs(current_age_data['mean'] - reference_mean)
                 is_significant = diff_absoluta > pd_margin
                 margin_disp = round(pd_margin, 3)
@@ -1058,18 +1058,18 @@ def main():
 
                 with col_grafico:
                     c1, c2, c3, c4, c5 = st.columns([1, 1, 0.15, 0.85, 1])
-                    chart_type = c1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed")
-                    intervalo_plot = c2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed")
+                    chart_type = c1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed", key="chart_type_sel")
+                    intervalo_plot = c2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", key="age_int_num")
                     
                     show_trendlines = False
                     if chart_type in ['Moving Average', 'Moving Median']:
-                        show_trendlines = c3.checkbox("chk_plateau", value=True, label_visibility="collapsed")
+                        show_trendlines = c3.checkbox("chk_plateau", value=True, label_visibility="collapsed", key="trend_chk")
                         c4.markdown(f"<div style='font-size: 1rem; color: inherit; margin-top: 5px; margin-left: -15px;'>Plateau Lines {HELP_ICON}</div>", unsafe_allow_html=True)
                         
                     if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
-                        group_by_sex_plot = c5.checkbox("Group by Sex", value=False)
+                        group_by_sex_plot = c5.checkbox("Group by Sex", value=False, key="grp_sex_chk")
                         sex_options_for_plot = [v for v in sex_column_values if v]
-                        selected_sexes_for_plot = st.multiselect("Filter specific sexes:", options=sex_options_for_plot, default=sex_options_for_plot)
+                        selected_sexes_for_plot = st.multiselect("Filter specific sexes:", options=sex_options_for_plot, default=sex_options_for_plot, key="flt_sex_multi")
                         if not selected_sexes_for_plot: selected_sexes_for_plot = sex_options_for_plot
                     
                     fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, intervalo_plot, chart_type, group_by_sex_plot, selected_sexes_for_plot, show_trendlines, st.session_state.ref_limits_list)
@@ -1125,7 +1125,7 @@ def main():
                 valid_haeckel_rows = [r for r in st.session_state.ref_limits_list if r.get('lri') is not None and r.get('lrs') is not None]
                 
                 if valid_haeckel_rows:
-                    with st.expander("🔬 EDA - Haeckel Calculation (State-of-the-Art and Biological Variation)", expanded=True):
+                    with st.expander("🔬 Calculation Audit Table - Haeckel (State-of-the-Art Structural View)", expanded=True):
                         st.markdown("<p style='font-size:0.9rem; color:#666;'>Verifiable mirror containing the thorough step-by-step math performed to obtain performance limits.</p>", unsafe_allow_html=True)
                         
                         for r_item in valid_haeckel_rows:
@@ -1133,7 +1133,7 @@ def main():
                             if not h: continue
                             
                             faixa_etaria_label = f"{r_item['age_min']} to {r_item['age_max']} years" if (r_item['age_min'] is not None or r_item['age_max'] is not None) else "Global"
-                            st.markdown(f"<div style='background-color:#E0F7FA; padding:5px 10px; font-weight:bold; color:{COLOR_PRIMARY}; margin-top:20px; border-radius:4px; border-left: 5px solid {COLOR_TERTIARY};'>Target Subgroup: Sex [{r_item['sex']}] | Age [{faixa_etaria_label}]</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div style='background-color:#E2F0D9; padding:5px 10px; font-weight:bold; color:{COLOR_PRIMARY}; margin-top:20px; border-radius:4px; border-left: 5px solid #385723;'>Target Subgroup: Sex [{r_item['sex']}] | Age [{faixa_etaria_label}]</div>", unsafe_allow_html=True)
                             
                             eq_lri_min = h['lri'] - (h['lri'] * h['m_lri']['pb']/100)
                             eq_lri_max = h['lri'] + (h['lri'] * h['m_lri']['pb']/100)
