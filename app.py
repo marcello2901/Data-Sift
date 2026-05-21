@@ -1150,7 +1150,7 @@ def main():
                         if group_by_sex_plot: cols_to_show_pos.insert(0, 'Sex')
                         st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
 
-                        titulo_metodo_2_completo = "2. Limites de Equivalência Clínica (Haeckel Ativo)" if any_haeckel_activated_at_all else "2. Empirical Analysis of Dispersion and Means (EADM)"
+                        titulo_metodo_2_completo = "2. Equivalence limites (Haeckel)" if any_haeckel_activated_at_all else "2. Empirical Analysis of Dispersion and Means (EADM)"
                         st.markdown(f"<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top:25px;'>{titulo_metodo_2_completo}</h4>", unsafe_allow_html=True)
                         cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Limit Threshold', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
                         if group_by_sex_plot: cols_to_show_ideal.insert(0, 'Sex')
