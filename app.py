@@ -533,12 +533,12 @@ def calcular_limites_haeckel(lri: float, lrs: float):
     m_lri = calc_for_x(lri)
     m_lrs = calc_for_x(lrs)
     
+    # Retiramos a função 'calc_for_x' daqui para não quebrar o cache do Streamlit
     return {
         'lri': lri, 'lrs': lrs,
         'cve': cve_star, 'pcva': pcva, 'med': med,
         'psa_med': psa_med, 'slope': slope, 'intercept': intercept,
-        'm_lri': m_lri, 'm_lrs': m_lrs,
-        'calc_for_x': calc_for_x
+        'm_lri': m_lri, 'm_lrs': m_lrs
     }
 
 
@@ -632,9 +632,13 @@ def run_harris_boyd(df, col_idade, col_dados, lri=None, lrs=None):
             
             # Dinâmica: Haeckel (pD Absoluto) vs AEDM (0.5 CV Relativo)
             if haeckel_stats:
-                metrics = haeckel_stats['calc_for_x'](reference_mean)
-                if metrics:
-                    pd_margin = 1.28 * metrics['psa']
+                if reference_mean > 0:
+                    # Cálculo inline de pSA para não usar a função aninhada que quebra o Pickle
+                    h_slope = haeckel_stats['slope']
+                    h_intercept = haeckel_stats['intercept']
+                    psa_x = (h_slope * reference_mean) + h_intercept
+                    
+                    pd_margin = 1.28 * psa_x
                     diff_absoluta = abs(current_age_data['mean'] - reference_mean)
                     is_significant = diff_absoluta > pd_margin
                     margin_disp = round(pd_margin, 3)
