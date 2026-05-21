@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Versão 3.3.0 (Matriz de Intervalos de Referência Dinâmica por Sexo/Idade - Haeckel & AEDM)
+# Versão 3.3.1 (Nomenclaturas Padronizadas: Harris-Boyd, EDA Haeckel & Empirical Analysis)
 import streamlit as st
 import pandas as pd
 from scipy import stats
@@ -31,7 +31,7 @@ st.set_page_config(
 
 # Paleta de Cores Baseada na Imagem de Referência
 COLOR_PRIMARY = "#073B4C"     # Azul Petróleo Escuro
-COLOR_SECONDARY = "#00E5FF"   # Ciano Brilhante Neon (Botões e destaques)
+COLOR_SECONDARY = "#00E5FF"   # Ciano Brilhante Neon (Botões e destakes)
 COLOR_TERTIARY = "#118AB2"    # Azul Petróleo Médio
 COLOR_BG = "#F8F9FA"          # Fundo Off-white
 COLOR_CARD_BG = "#FFFFFF"     # Fundo dos Cards Branco puro
@@ -127,7 +127,7 @@ st.markdown(f"""
         /* Barra de Progresso */
         .stProgress > div > div > div > div {{ background-color: {COLOR_SECONDARY} !important; }}
         
-        /* --- MINI CARD LATERAL (Harris-Boyd) --- */
+        /* --- MINI CARD LATERAL --- */
         .mini-card-dark {{
             background-color: {COLOR_PRIMARY};
             color: white;
@@ -519,14 +519,9 @@ def calcular_limites_haeckel(lri: float, lrs: float):
     }
 
 def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> Optional[dict]:
-    """
-    Varre a matriz customizada buscando o par LRI/LRS correto para a Idade e Sexo.
-    Se a idade transbordar os limites informados, assume e estende a última ponta cadastrada.
-    """
     if not lista_limites: return None
     sexo_str = str(sexo).strip().lower() if sexo else ""
     
-    # 1. Filtra compatibilidade primária por sexo (específico ou curingas "Todos"/"All")
     filtrados_sexo = []
     for item in lista_limites:
         s_lim = str(item.get('sex', '')).strip().lower()
@@ -535,7 +530,6 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
             
     if not filtrados_sexo: return None
     
-    # 2. Divide em regras direcionadas por idade vs regras globais (sem idade definida)
     com_idade = [item for item in filtrados_sexo if item.get('age_min') is not None or item.get('age_max') is not None]
     globais = [item for item in filtrados_sexo if item.get('age_min') is None and item.get('age_max') is None]
     
@@ -544,7 +538,6 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
             if str(g.get('sex', '')).strip().lower() == sexo_str: return g
         return globais[0] if globais else None
         
-    # 3. Busca match exato dentro do cercado de idades
     match_direto = []
     for item in com_idade:
         amin = item.get('age_min') if item.get('age_min') is not None else 0
@@ -557,7 +550,6 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
             if str(m.get('sex', '')).strip().lower() == sexo_str: return m
         return match_direto[0]
         
-    # 4. TRATAMENTO DAS PONTAS: Idade fora das margens explícitas cadastradas
     ordenados_por_min = sorted(com_idade, key=lambda x: x.get('age_min') if x.get('age_min') is not None else 0)
     menor_idade = ordenados_por_min[0].get('age_min', 0) if ordenados_por_min[0].get('age_min') is not None else 0
     
@@ -634,7 +626,7 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
     df_possible = pd.DataFrame(possible_cuts_hb).sort_values(by='age') if possible_cuts_hb else pd.DataFrame()
 
     # =========================================================================
-    # PISTA 2: ABORDAGEM PRÁTICA DINÂMICA (HAECKEL MULTI-ALVO OU AEDM)
+    # PISTA 2: ABORDAGEM PRÁTICA DINÂMICA
     # =========================================================================
     age_groups = temp_df.groupby('Age')['Data'].agg(['mean', 'count']).reset_index()
     age_groups = age_groups.sort_values(by='Age').to_dict('records')
@@ -654,7 +646,6 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
             is_significant = False
             margin_disp = 0
             
-            # Pareamento em tempo de execução para descobrir o LRI/LRS da idade + sexo vigentes
             limite_casado = encontrar_limites_casados(current_age_data['Age'], sexo_contexto, lista_limites)
             
             h_local = None
@@ -869,7 +860,6 @@ def draw_stratum_rules():
                 else: st.warning("Cannot delete the last age range.")
 
 def draw_reference_limits_matrix(sex_options):
-    """ Interface para inserção dinâmica da matriz de limites de referência """
     st.markdown("##### 📊 Matriz de Intervalos de Referência Customizada")
     st.markdown("<p style='font-size:0.85rem; color:#555;'>Configure faixas de idades e sexos específicos. Deixe idade em branco para aplicar globalmente àquele sexo.</p>", unsafe_allow_html=True)
     
@@ -1032,8 +1022,7 @@ def main():
             if not st.session_state.col_idade or not st.session_state.col_dados:
                 st.info("⚠️ Select the **'Age Column'** and **'Data Column'** in Global Settings to enable visual analysis and stratification.")
             else:
-                # Painel de Matriz de Intervalos Clinicos Customizada
-                st.markdown("#### ⚙️ Configuração Estratificada de Limites Clínicos (Haeckel / AEDM)")
+                st.markdown("#### ⚙️ Configuração Estratificada de Limites Clínicos")
                 draw_reference_limits_matrix(sex_column_values)
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 15px 0 25px 0;'>", unsafe_allow_html=True)
 
@@ -1079,8 +1068,11 @@ def main():
                                 if h_activated: any_haeckel_activated_at_all = True
                                 
                                 max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max())
-                                render_mini_tabela("1. Harris-Boyd (Statistical)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_sub)
-                                render_mini_tabela("2. Análise Prática (Haeckel/AEDM)", cuts_ideais, max_age_sub)
+                                
+                                titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
+                                
+                                render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_sub)
+                                render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_sub)
 
                                 if not df_possiveis.empty:
                                     df_p = df_possiveis.copy(); df_p.insert(0, 'Sex', str(sex_val)); df_possiveis_global_list.append(df_p)
@@ -1091,8 +1083,10 @@ def main():
                             if h_activated: any_haeckel_activated_at_all = True
                             max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
                             
-                            render_mini_tabela("1. Harris-Boyd (Statistical)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_full)
-                            render_mini_tabela("2. Análise Prática (Haeckel/AEDM)", cuts_ideais, max_age_full)
+                            titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
+                            
+                            render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_full)
+                            render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_full)
 
                             if not df_possiveis.empty: df_possiveis_global_list.append(df_possiveis)
                             if not df_ideais.empty: df_ideais_global_list.append(df_ideais)
@@ -1105,7 +1099,7 @@ def main():
                 valid_haeckel_rows = [r for r in st.session_state.ref_limits_list if r.get('lri') is not None and r.get('lrs') is not None]
                 
                 if valid_haeckel_rows:
-                    with st.expander("🔬 Calculations of analytical performance prediction limits - Haeckel (State of the Art and Biological Variation)", expanded=False):
+                    with st.expander("🔬 Tabela de Auditoria de Cálculos Multiparamétrica - Haeckel", expanded=False):
                         for r_item in valid_haeckel_rows:
                             h = calcular_limites_haeckel(r_item['lri'], r_item['lrs'])
                             if not h: continue
@@ -1140,17 +1134,20 @@ def main():
                             """
                             st.markdown(html_table, unsafe_allow_html=True)
 
+                # =========================================================================
+                # TABELAS DETALHADAS INFERIORES
+                # =========================================================================
                 df_possiveis_global = pd.concat(df_possiveis_global_list, ignore_index=True) if df_possiveis_global_list else pd.DataFrame()
                 df_ideais_global = pd.concat(df_ideais_global_list, ignore_index=True) if df_ideais_global_list else pd.DataFrame()
 
                 if not df_possiveis_global.empty:
                     with st.expander("📊 View Detailed Stratification Data Tables", expanded=False):
-                        st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold;'>1. Statistical approach (Harris-Boyd)</h4>", unsafe_allow_html=True)
+                        st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold;'>Harris-Boyd (Statistical approach)</h4>", unsafe_allow_html=True)
                         cols_to_show_pos = ['Age Cutoff', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
                         if group_by_sex_plot: cols_to_show_pos.insert(0, 'Sex')
                         st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
 
-                        titulo_metodo_2_completo = "2. Equivalence limites (Haeckel)" if any_haeckel_activated_at_all else "2. Empirical Analysis of Dispersion and Means (EADM)"
+                        titulo_metodo_2_completo = "EDA Haeckel (Practical approach)" if any_haeckel_activated_at_all else "Empirical Analysis of Dispersion and Means (Empirical approach)"
                         st.markdown(f"<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top:25px;'>{titulo_metodo_2_completo}</h4>", unsafe_allow_html=True)
                         cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Limit Threshold', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
                         if group_by_sex_plot: cols_to_show_ideal.insert(0, 'Sex')
