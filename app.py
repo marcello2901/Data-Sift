@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Versão 3.3.1 (Nomenclaturas Padronizadas: Harris-Boyd, EDA Haeckel & Empirical Analysis)
+# Version 3.4.0 (Restored Stacked Table Design & Full English Internationalization)
 import streamlit as st
 import pandas as pd
 from scipy import stats
@@ -22,41 +22,41 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import base64
 
-# --- CONFIGURAÇÃO E TEMA DA PÁGINA ---
+# --- PAGE CONFIGURATION & THEME ---
 st.set_page_config(
     page_title="DataSift",
     page_icon="favicon.png", 
     layout="wide" 
 )
 
-# Paleta de Cores Baseada na Imagem de Referência
-COLOR_PRIMARY = "#073B4C"     # Azul Petróleo Escuro
-COLOR_SECONDARY = "#00E5FF"   # Ciano Brilhante Neon (Botões e destakes)
-COLOR_TERTIARY = "#118AB2"    # Azul Petróleo Médio
-COLOR_BG = "#F8F9FA"          # Fundo Off-white
-COLOR_CARD_BG = "#FFFFFF"     # Fundo dos Cards Branco puro
+# Color Palette Based on Reference Image
+COLOR_PRIMARY = "#073B4C"     # Dark Teal
+COLOR_SECONDARY = "#00E5FF"   # Bright Neon Cyan (Buttons and Highlights)
+COLOR_TERTIARY = "#118AB2"    # Medium Teal
+COLOR_BG = "#F8F9FA"          # Off-white Background
+COLOR_CARD_BG = "#FFFFFF"     # Pure White Card Background
 
-# Ícone de opção de ajuda
+# Help Option Icon
 help_icon = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px;'>?</span>"
-HELP_ICON = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px; margin-left: 5px;' title='Draws horizontal lines based on Harris-Boyd cuts.'>?</span>"
+HELP_ICON = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px; margin-left: 5px;' title='Draws horizontal lines based on stratification cuts.'>?</span>"
 
-# Injeção de CSS para forçar a identidade visual e o Layout em Cards
+# CSS Injection for Visual Identity and Card-Based Layout
 st.markdown(f"""
     <style>
-        /* Ajustes Estruturais e Fundo da Página */
+        /* Structural Adjustments and Page Background */
         [data-testid="stAppViewBlockContainer"] {{
             padding-top: 2rem !important;
         }}
         .stApp {{ background-color: {COLOR_BG} !important; }}
         [data-testid="stStatusWidget"] {{ visibility: hidden; }}
         
-        /* Oculta títulos padrão para usar HTML customizado */
+        /* Hide Default Titles to Use Custom HTML */
         .st-emotion-cache-10trblm h1, .st-emotion-cache-10trblm h2, .st-emotion-cache-10trblm h3 {{
             color: {COLOR_PRIMARY} !important;
             font-weight: 800 !important;
         }}
 
-        /* --- ESTILOS DOS CARDS --- */
+        /* --- CARD STYLES --- */
         .card-container {{
             background-color: {COLOR_CARD_BG};
             border-radius: 10px;
@@ -85,7 +85,7 @@ st.markdown(f"""
         }}
         .card-content-area {{ padding: 20px; }}
 
-        /* --- BOTÕES --- */
+        /* --- BUTTONS --- */
         button[kind="primary"] {{
             background-color: {COLOR_SECONDARY} !important;
             color: {COLOR_PRIMARY} !important; 
@@ -104,7 +104,7 @@ st.markdown(f"""
             border-radius: 6px !important;
         }}
         
-        /* Mini Botões (Clone/X) */
+        /* Mini Buttons (Clone/X) */
         .stButton>button {{ padding: 0.15rem 0.5rem; }}
 
         /* --- INPUTS --- */
@@ -124,10 +124,10 @@ st.markdown(f"""
             font-size: 0.9rem !important;
         }}
         
-        /* Barra de Progresso */
+        /* Progress Bar */
         .stProgress > div > div > div > div {{ background-color: {COLOR_SECONDARY} !important; }}
         
-        /* --- MINI CARD LATERAL --- */
+        /* --- MINI CARD SIDEBAR --- */
         .mini-card-dark {{
             background-color: {COLOR_PRIMARY};
             color: white;
@@ -170,7 +170,7 @@ def get_base64_of_bin_file(bin_file):
 logo_path = "datasift_logo.png"
 logo_base64 = get_base64_of_bin_file(logo_path)
 
-# --- CONSTANTES E DADOS ---
+# --- CONSTANTS & DOCUMENTATION ---
 GDPR_TERMS = """
 This tool is designed to process and filter data from spreadsheets. The files you upload may contain sensitive personal data (such as full name, date of birth, national ID numbers, health information, etc.), the processing of which is regulated by data protection laws like the General Data Protection Regulation (GDPR or LGPD).
 
@@ -185,46 +185,21 @@ MANUAL_CONTENT = {
     "Introduction": """**Welcome to Data Sift!**\n\nThis program is a spreadsheet filter tool designed to optimize your work with large volumes of data by offering two main functionalities:\n\n1.  **Filtering:** To clean your database by removing rows that are not of interest.\n2.  **Stratification:** To divide your database into specific subgroups.""",
     "1. Global Settings": """**1. Global Settings**\n\nThis section contains the essential settings that are shared between both tools.\n\n- **Select Spreadsheet:**\n  Opens a window to select the source data file. It supports `.xlsx`, `.xls`, and `.csv` formats.\n\n- **Age Column / Sex/Gender / Data Column:**\n  Fields to **select** the column names in your spreadsheet. The **Data Column** is specifically used to automatically run the stratification study and generate charts.\n\n- **Output Format:**\n  A selection menu to choose the format of the generated files. Choose `Excel (.xlsx)` for Microsoft Excel or `CSV (.csv)` for a lighter format.""",
     "2. Filter Tool": """**2. Filter Tool**\n\nThe purpose of this tool is to **"clean"** your spreadsheet by **removing** rows that match specific criteria. The result is a **single file** containing only the data that "survived" the filters.\n\n**How Exclusion Rules Work:**\nEach row you add is a condition to **remove** data. If a row in your spreadsheet matches an active rule, it **will be excluded** from the final file.\n\n- **[✓] (Activation Checkbox):** Toggles a rule on or off without deleting it.\n\n- **Column:** The name of the column where the filter will be applied.\n\n- **Operator and Value:** Operators define the rule's logic to set exclusion ranges.\n\n- **Compound Logic:** Expands the rule to create `AND` / `OR` conditions.\n\n- **Condition:** Allows applying a secondary filter based on sex and/or age conditions.\n\n- **Actions:** The `X` button deletes the rule. The 'Clone' button duplicates it.""",
-    "3. Stratification Tool": """**3. Stratification Tool**\n\nThis tool splits your spreadsheet into **multiple smaller files**, where each file represents a subgroup of interest.\n\n**Statistical and Practical approaches & Charts:**\nAutomatically evaluates the selected Data Column and Age Column to suggest the most statistically relevant age cuts. If Reference Limits are provided, Haeckel's formula is executed.\n\n**How Stratification Works:**\n- **Stratification Options by Sex/Gender:** Select the genders you want to include.\n- **Age Range Definitions:** Create the specific age boundaries.\n- **Generate Stratified Sheets:** Starts the splitting process."""
+    "3. Stratification Tool": """**3. Stratification Tool**\n\nThis tool splits your spreadsheet into **multiple smaller files**, where each file represents a subgroup of interest.\n\n**Statistical and Practical approaches & Charts:**\nAutomatically evaluates the selected Data Column and Age Column to suggest the most relevant age cuts. If Reference Limits are provided, Haeckel's formula is executed.\n\n**How Stratification Works:**\n- **Stratification Options by Sex/Gender:** Select the genders you want to include.\n- **Age Range Definitions:** Create the specific age boundaries.\n- **Generate Stratified Sheets:** Starts the splitting process."""
 }
 
 DEFAULT_FILTERS = [
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'CAPA.IST', 'p_op1': '<', 'p_val1': '15', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '50', 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Ferritina.FERRI', 'p_op1': '<', 'p_val1': '15', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '600', 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Ultra-PCR.ULTRAPCR', 'p_op1': '>', 'p_val1': '5', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Creatinina.CRE', 'p_op1': '>', 'p_val1': '1,5', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Creatinina.eTFG2021', 'p_op1': '<', 'p_val1': '60', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'GLICOSE.GLI', 'p_op1': '<', 'p_val1': '65', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '200', 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'HBGLI.HBGLI', 'p_op1': '>', 'p_val1': '6,5', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'TSH.TSH', 'p_op1': '<', 'p_val1': '0,2', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '10', 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.LEUCO', 'p_op1': '>', 'p_val1': '11000', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.#HGB', 'p_op1': '<', 'p_val1': '7', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.OBSSV', 'p_op1': 'Not equal to', 'p_val1': 'empty', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.OBSSB', 'p_op1': 'Not equal to', 'p_val1': 'empty', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': True, 'p_col': 'Hemo.OBSPLT', 'p_op1': 'Not equal to', 'p_val1': 'empty', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'TGP.TGP', 'p_op1': '>', 'p_val1': '41', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'TGO.TGO', 'p_op1': '>', 'p_val1': '40', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'BTF.BTBTF', 'p_op1': '>', 'p_val1': '2,4', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'FALC.FALC', 'p_op1': '>', 'p_val1': '129', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'GGT.GGT', 'p_op1': '>', 'p_val1': '60', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'LIPIDOGRAMA.COL2', 'p_op1': '>', 'p_val1': '190', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'COLESTEROL TOTAL E FRACOES.COL2', 'p_op1': '>', 'p_val1': '190', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'LIPIDOGRAMA.TRI2', 'p_op1': '>', 'p_val1': '150', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'COLESTEROL TOTAL E FRACOES.TRI2', 'p_op1': '>', 'p_val1': '150', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'LIPIDOGRAMA.LDL2', 'p_op1': '>', 'p_val1': '130', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'COLESTEROL TOTAL E FRACOES.LDLD', 'p_op1': '>', 'p_val1': '130', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'LIPIDOGRAMA.HDL5', 'p_op1': '>', 'p_val1': '80', 'p_expand': False, 'c_check': False},
-    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'COLESTEROL TOTAL E FRACOES.HDL5', 'p_op1': '>', 'p_val1': '80', 'p_expand': False, 'c_check': False},
-
+    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'CAPA.IST', 'p_op1': '<', 'p_val1': '15', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '50', 'c_check': False},
+    {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'Ferritina.FERRI', 'p_op1': '<', 'p_val1': '15', 'p_expand': True, 'p_op_central': 'OR', 'p_op2': '>', 'p_val2': '600', 'c_check': False},
 ]
 
-# --- CLASSES DE PROCESSAMENTO ---
+# --- PROCESSING ENGINE CLASSES ---
 @st.cache_resource
 def get_data_processor():
     return DataProcessor()
 
 class DataProcessor:
-    OPERATOR_MAP = {'=': '=', '==': '=', 'Não é igual a': '!=', '≥': '>=', '≤': '<=', 'is equal to': '=', 'Not equal to': '!='}
+    OPERATOR_MAP = {'=': '=', '==': '=', 'Is not equal to': '!=', '≥': '>=', '≤': '<=', 'is equal to': '=', 'Not equal to': '!='}
 
     def _build_single_sql_cond(self, col: str, op: str, val: Any) -> str:
         if not op: return "FALSE"
@@ -443,7 +418,7 @@ class DataProcessor:
         final_name = "_".join(part for part in name_parts if part)
         return final_name if final_name else "Group_All"
 
-# --- FUNÇÕES AUXILIARES OTIMIZADAS ---
+# --- CACHED UTILITY FUNCTIONS ---
 
 @st.cache_data(show_spinner="Reading file...")
 def load_dataframe(uploaded_file):
@@ -550,7 +525,7 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
     filtrados_sexo = []
     for item in lista_limites:
         s_lim = str(item.get('sex', '')).strip().lower()
-        if s_lim in ('todos', 'all', '', sexo_str):
+        if s_lim in ('all', 'todos', '', sexo_str):
             filtrados_sexo.append(item)
             
     if not filtrados_sexo: return None
@@ -595,7 +570,7 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
 
 
 @st.cache_data(show_spinner=False)
-def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto="Todos"):
+def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto="All"):
     temp_df = pd.DataFrame()
     temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
 
@@ -622,7 +597,7 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
     cv_tolerance_margin = global_cv * 0.50
 
     # =========================================================================
-    # PISTA 1: ABORDAGEM ESTATÍSTICA (HARRIS-BOYD PURO)
+    # TRACK 1: STATISTICAL APPROACH (HARRIS-BOYD)
     # =========================================================================
     possible_cuts_hb = []
     for age_cutoff in range(1, max_age):
@@ -651,7 +626,7 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
     df_possible = pd.DataFrame(possible_cuts_hb).sort_values(by='age') if possible_cuts_hb else pd.DataFrame()
 
     # =========================================================================
-    # PISTA 2: ABORDAGEM PRÁTICA DINÂMICA
+    # TRACK 2: DYNAMIC CRITICAL BOUNDARY EVALUATION (HAECKEL VS AEDM)
     # =========================================================================
     age_groups = temp_df.groupby('Age')['Data'].agg(['mean', 'count']).reset_index()
     age_groups = age_groups.sort_values(by='Age').to_dict('records')
@@ -778,7 +753,7 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
                 for i, sex_val in enumerate(temp_df[hue_col].dropna().unique()): 
                     draw_segments(temp_df[temp_df[hue_col] == sex_val], palette[i], str(sex_val))
             else: 
-                draw_segments(temp_df, COLOR_SECONDARY, "Todos")
+                draw_segments(temp_df, COLOR_SECONDARY, "All")
 
     ax.set_xlabel('Age (Years)', fontsize=12, labelpad=10)
     ax.set_xticks(range(len(categories)))
@@ -804,7 +779,7 @@ def to_excel(df):
 def to_csv(df):
     return df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
 
-# --- FUNÇÕES DE INTERFACE ---
+# --- USER INTERFACE BUILDER FUNCTIONS ---
 def draw_filter_rules(sex_column_values, column_options): 
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="small")
     header_cols[1].markdown(f"**Column** {help_icon}", unsafe_allow_html=True)
@@ -885,18 +860,18 @@ def draw_stratum_rules():
                 else: st.warning("Cannot delete the last age range.")
 
 def draw_reference_limits_matrix(sex_options):
-    st.markdown("##### 📊 Matriz de Intervalos de Referência Customizada")
-    st.markdown("<p style='font-size:0.85rem; color:#555;'>Configure faixas de idades e sexos específicos. Deixe idade em branco para aplicar globalmente àquele sexo.</p>", unsafe_allow_html=True)
+    st.markdown("##### 📊 Custom Stratified Reference Intervals Matrix")
+    st.markdown("<p style='font-size:0.85rem; color:#555;'>Configure reference criteria for specific sexes and age ranges. Leave ages blank to apply globally to that sex subgroup.</p>", unsafe_allow_html=True)
     
     h_cols = st.columns([2, 1.5, 1.5, 2, 2, 1])
-    h_cols[0].markdown("**Sexo/Gênero**")
-    h_cols[1].markdown("**Idade Mín (Anos)**")
-    h_cols[2].markdown("**Idade Máx (Anos)**")
-    h_cols[3].markdown("**Limite Inf (LRI)**")
-    h_cols[4].markdown("**Limite Sup (LRS)**")
-    h_cols[5].markdown("**Ação**")
+    h_cols[0].markdown("**Sex/Gender**")
+    h_cols[1].markdown("**Min Age (Y)**")
+    h_cols[2].markdown("**Max Age (Y)**")
+    h_cols[3].markdown("**Lower Ref Limit (LRI)**")
+    h_cols[4].markdown("**Upper Ref Limit (LRS)**")
+    h_cols[5].markdown("**Action**")
 
-    sex_dropdown_options = ["Todos"] + [x for x in sex_options if x]
+    sex_dropdown_options = ["All"] + [x for x in sex_options if x]
 
     for idx, item in enumerate(st.session_state.ref_limits_list):
         with st.container():
@@ -910,18 +885,18 @@ def draw_reference_limits_matrix(sex_options):
             item['lri'] = r_cols[3].number_input(f"lri_{item['id']}", min_value=0.0, format="%.3f", value=item['lri'], label_visibility="collapsed")
             item['lrs'] = r_cols[4].number_input(f"lrs_{item['id']}", min_value=0.0, format="%.3f", value=item['lrs'], label_visibility="collapsed")
             
-            if r_cols[5].button("X", key=f"del_ref_{item['id']}", help="Remover esta faixa"):
+            if r_cols[5].button("X", key=f"del_ref_{item['id']}", help="Remove this reference range"):
                 st.session_state.ref_limits_list.pop(idx)
                 st.rerun()
 
-    if st.button("+ Adicionar Novo Intervalo de Referência", type="secondary"):
-        st.session_state.ref_limits_list.append({'id': str(uuid.uuid4()), 'sex': 'Todos', 'age_min': None, 'age_max': None, 'lri': None, 'lrs': None})
+    if st.button("+ Add New Reference Interval Row", type="secondary"):
+        st.session_state.ref_limits_list.append({'id': str(uuid.uuid4()), 'sex': 'All', 'age_min': None, 'age_max': None, 'lri': None, 'lrs': None})
         st.rerun()
 
 def main():
     if 'lgpd_accepted' not in st.session_state: st.session_state.lgpd_accepted = False
     
-    # --- TELA DE ENTRADA (LGPD) ---
+    # --- ENTER PRIVACY COMPLIANCE SCREEN ---
     if not st.session_state.lgpd_accepted:
         if logo_base64:
             st.markdown(f'<div style="display: flex; justify-content: center; margin-top: 1rem; margin-bottom: 2rem;"><img src="data:image/png;base64,{logo_base64}" width="220"></div>', unsafe_allow_html=True)
@@ -937,13 +912,13 @@ def main():
             st.rerun()
         return
 
-    # --- INICIALIZAÇÃO DE VARIÁVEIS ---
+    # --- SESSION STATE INITIALIZATION ---
     if 'filter_rules' not in st.session_state: 
         st.session_state.filter_rules = copy.deepcopy(DEFAULT_FILTERS)
     if 'stratum_rules' not in st.session_state: 
         st.session_state.stratum_rules = [{'id': str(uuid.uuid4()), 'op1': '', 'val1': '', 'op2': '', 'val2': ''}]
     if 'ref_limits_list' not in st.session_state:
-        st.session_state.ref_limits_list = [{'id': str(uuid.uuid4()), 'sex': 'Todos', 'age_min': None, 'age_max': None, 'lri': None, 'lrs': None}]
+        st.session_state.ref_limits_list = [{'id': str(uuid.uuid4()), 'sex': 'All', 'age_min': None, 'age_max': None, 'lri': None, 'lrs': None}]
     
     with st.sidebar:
         if logo_base64: st.markdown(f'<div style="display: flex; justify-content: center; margin-bottom: 1rem;"><img src="data:image/png;base64,{logo_base64}" width="150"></div>', unsafe_allow_html=True)
@@ -1003,9 +978,10 @@ def main():
 
     is_ready_for_processing = st.session_state.age_column_is_valid and st.session_state.sex_column_is_valid
     
-    # --- SISTEMA DE ABAS (TABS) ---
+    # --- NAVIGATION TABS ---
     tab_filter, tab_stratify = st.tabs(["2. Filter Tool", "3. Stratification Tool"])
 
+    # --- TAB 2: FILTER TOOL ---
     with tab_filter:
         st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
         st.markdown(f'<div class="card-header-bar">Exclusion Filter Configuration</div>', unsafe_allow_html=True)
@@ -1038,6 +1014,7 @@ def main():
         if 'filtered_result' in st.session_state:
             st.download_button("⬇️ Download Final Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True, type="secondary")
 
+    # --- TAB 3: ANALYSIS & STRATIFICATION ---
     with tab_stratify:
         st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
         st.markdown(f'<div class="card-header-bar">Visual-Statistical Analysis and Stratification</div>', unsafe_allow_html=True)
@@ -1047,7 +1024,7 @@ def main():
             if not st.session_state.col_idade or not st.session_state.col_dados:
                 st.info("⚠️ Select the **'Age Column'** and **'Data Column'** in Global Settings to enable visual analysis and stratification.")
             else:
-                st.markdown("#### ⚙️ Configuração Estratificada de Limites Clínicos")
+                st.markdown("#### ⚙️ Clinical Reference Boundaries Configuration")
                 draw_reference_limits_matrix(sex_column_values)
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 15px 0 25px 0;'>", unsafe_allow_html=True)
 
@@ -1104,7 +1081,7 @@ def main():
                                 if not df_ideais.empty:
                                     df_i = df_ideais.copy(); df_i.insert(0, 'Sex', str(sex_val)); df_ideais_global_list.append(df_i)
                         else:
-                            df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.ref_limits_list, "Todos")
+                            df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.ref_limits_list, "All")
                             if h_activated: any_haeckel_activated_at_all = True
                             max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
                             
@@ -1118,19 +1095,21 @@ def main():
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 # =========================================================================
-                # AUDITORIA EXPANSIVA DA MATRIZ MULTI-INTERVALOS
+                # MULTIPARAMETRIC HAECKEL AUDIT TABLES (RESTORED TO ORIGINAL STACKED MODEL)
                 # =========================================================================
                 st.markdown("<div style='margin-top: 35px;'></div>", unsafe_allow_html=True)
                 valid_haeckel_rows = [r for r in st.session_state.ref_limits_list if r.get('lri') is not None and r.get('lrs') is not None]
                 
                 if valid_haeckel_rows:
-                    with st.expander("🔬 Tabela de Auditoria de Cálculos Multiparamétrica - Haeckel", expanded=False):
+                    with st.expander("🔬 Calculation Audit Table - Haeckel (State-of-the-Art Structural View)", expanded=True):
+                        st.markdown("<p style='font-size:0.9rem; color:#666;'>Verifiable mirror containing the thorough step-by-step math performed to obtain performance limits.</p>", unsafe_allow_html=True)
+                        
                         for r_item in valid_haeckel_rows:
                             h = calcular_limites_haeckel(r_item['lri'], r_item['lrs'])
                             if not h: continue
                             
-                            faixa_etaria_label = f"{r_item['age_min']} a {r_item['age_max']} anos" if (r_item['age_min'] is not None or r_item['age_max'] is not None) else "Global"
-                            st.markdown(f"<div style='background-color:#E0F7FA; padding:5px 10px; font-weight:bold; color:{COLOR_PRIMARY}; margin-top:15px; border-radius:4px;'>Subgrupo Alvo: Sexo [{r_item['sex']}] | Idade [{faixa_etaria_label}]</div>", unsafe_allow_html=True)
+                            faixa_etaria_label = f"{r_item['age_min']} to {r_item['age_max']} years" if (r_item['age_min'] is not None or r_item['age_max'] is not None) else "Global"
+                            st.markdown(f"<div style='background-color:#E2F0D9; padding:5px 10px; font-weight:bold; color:{COLOR_PRIMARY}; margin-top:20px; border-radius:4px; border-left: 5px solid #385723;'>Target Subgroup: Sex [{r_item['sex']}] | Age [{faixa_etaria_label}]</div>", unsafe_allow_html=True)
                             
                             eq_lri_min = h['lri'] - (h['lri'] * h['m_lri']['pb']/100)
                             eq_lri_max = h['lri'] + (h['lri'] * h['m_lri']['pb']/100)
@@ -1138,29 +1117,49 @@ def main():
                             eq_lrs_max = h['lrs'] + (h['lrs'] * h['m_lrs']['pb']/100)
                             
                             html_table = f"""
-                            <table style="width:100%; text-align:center; border-collapse: collapse; font-family: sans-serif; font-size:0.85rem; margin-bottom:15px;" border="1">
+                            <table style="width:100%; text-align:center; border-collapse: collapse; font-family: sans-serif; font-size:0.9rem; margin-top:5px; margin-bottom:20px;" border="1">
                                 <tr style="background-color:{COLOR_PRIMARY}; color:white;">
-                                    <td>LRI: <b>{h['lri']:.3f}</b></td><td>LRS: <b>{h['lrs']:.3f}</b></td>
-                                    <td>CVE: {h['cve']:.3f}%</td><td>pCVA: {h['pcva']:.3f}%</td>
-                                    <td>Mediana: {h['med']:.3f}</td><td>pSA,Med: {h['psa_med']:.3f}</td>
-                                    <td>Slope: {h['slope']:.4f}</td><td>Intercept: {h['intercept']:.4f}</td>
+                                    <th colspan="2" style="padding:8px; border: 1px solid #CCC;">Comparative Reference Interval Input</th>
+                                    <th colspan="6" style="padding:8px; border: 1px solid #CCC;">Calculation of Analytical Performance Specification Limits (Haeckel)</th>
                                 </tr>
-                                <tr>
-                                    <td colspan="2" style="background-color:#FFF9C4; font-weight:bold;">Extremidade LRI</td>
-                                    <td>pSA_LRI: {h['m_lri']['psa']:.3f}</td><td>pCVA_LRI: {h['m_lri']['pcva']:.3f}%</td><td>pB_LRI: {h['m_lri']['pb']:.3f}%</td>
-                                    <td colspan="3" style="background-color:#F5F5F5;">Intervalo Equivalência LRI: <b>{eq_lri_min:.2f} a {eq_lri_max:.2f}</b></td>
+                                <tr style="background-color:#E0F7FA; font-weight:bold; color:{COLOR_PRIMARY};">
+                                    <td style="padding:6px; border: 1px solid #CCC;">LRI</td><td style="padding:6px; border: 1px solid #CCC;">LRS</td>
+                                    <td style="border: 1px solid #CCC;">CV<sub>E</sub</td><td style="border: 1px solid #CCC;">pCV<sub>A</sub></td><td style="border: 1px solid #CCC;">Med<sub>ln</sub></td><td style="border: 1px solid #CCC;">pS<sub>A,Med</sub></td><td style="border: 1px solid #CCC;">Slope</td><td style="border: 1px solid #CCC;">Intercept</td>
                                 </tr>
-                                <tr>
-                                    <td colspan="2" style="background-color:#FFF9C4; font-weight:bold;">Extremidade LRS</td>
-                                    <td>pSA_LRS: {h['m_lrs']['psa']:.3f}</td><td>pCVA_LRS: {h['m_lrs']['pcva']:.3f}%</td><td>pB_LRS: {h['m_lrs']['pb']:.3f}%</td>
-                                    <td colspan="3" style="background-color:#F5F5F5;">Intervalo Equivalência LRS: <b>{eq_lrs_min:.2f} a {eq_lrs_max:.2f}</b></td>
+                                <tr style="background-color:#FFFFFF;">
+                                    <td style="padding:8px; border: 1px solid #CCC;"><b>{h['lri']:.3f}</b></td><td style="padding:8px; border: 1px solid #CCC;"><b>{h['lrs']:.3f}</b></td>
+                                    <td style="border: 1px solid #CCC;">{h['cve']:.3f}%</td><td style="border: 1px solid #CCC;">{h['pcva']:.3f}%</td>
+                                    <td style="border: 1px solid #CCC;">{h['med']:.3f}</td><td style="border: 1px solid #CCC;">{h['psa_med']:.3f}</td>
+                                    <td style="border: 1px solid #CCC;">{h['slope']:.4f}</td><td style="border: 1px solid #CCC;">{h['intercept']:.4f}</td>
+                                </tr>
+                                <tr style="background-color:#FFF9C4; font-weight:bold; color:{COLOR_PRIMARY};">
+                                    <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
+                                    <td colspan="2" style="padding:6px; border: 1px solid #CCC;">pS<sub>A,LRI</sub></td><td colspan="2" style="border: 1px solid #CCC;">pCV<sub>A,LRI</sub></td><td style="border: 1px solid #CCC;">pB<sub>LRI</sub></td><td style="border: 1px solid #CCC;">LRI Equivalence Bound Interval</td>
+                                </tr>
+                                <tr style="background-color:#FFFFFF;">
+                                    <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
+                                    <td colspan="2" style="padding:8px; border: 1px solid #CCC;">{h['m_lri']['psa']:.3f}</td>
+                                    <td colspan="2" style="border: 1px solid #CCC;">{h['m_lri']['pcva']:.3f}%</td>
+                                    <td style="border: 1px solid #CCC;">{h['m_lri']['pb']:.3f}%</td>
+                                    <td style="border: 1px solid #CCC;"><b>{eq_lri_min:.1f} to {eq_lri_max:.1f}</b></td>
+                                </tr>
+                                <tr style="background-color:#FFF9C4; font-weight:bold; color:{COLOR_PRIMARY};">
+                                    <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
+                                    <td colspan="2" style="padding:6px; border: 1px solid #CCC;">pS<sub>A,LRS</sub></td><td colspan="2" style="border: 1px solid #CCC;">pCV<sub>A,LRS</sub></td><td style="border: 1px solid #CCC;">pB<sub>LRS</sub></td><td style="border: 1px solid #CCC;">LRS Equivalence Bound Interval</td>
+                                </tr>
+                                <tr style="background-color:#FFFFFF;">
+                                    <td colspan="2" style="border:none; background-color:#FFFFFF;"></td>
+                                    <td colspan="2" style="padding:8px; border: 1px solid #CCC;">{h['m_lrs']['psa']:.3f}</td>
+                                    <td colspan="2" style="border: 1px solid #CCC;">{h['m_lrs']['pcva']:.3f}%</td>
+                                    <td style="border: 1px solid #CCC;">{h['m_lrs']['pb']:.3f}%</td>
+                                    <td style="border: 1px solid #CCC;"><b>{eq_lrs_min:.1f} to {eq_lrs_max:.1f}</b></td>
                                 </tr>
                             </table>
                             """
                             st.markdown(html_table, unsafe_allow_html=True)
 
                 # =========================================================================
-                # TABELAS DETALHADAS INFERIORES
+                # SUMMARY DETAILED BOTTOM TABLES
                 # =========================================================================
                 df_possiveis_global = pd.concat(df_possiveis_global_list, ignore_index=True) if df_possiveis_global_list else pd.DataFrame()
                 df_ideais_global = pd.concat(df_ideais_global_list, ignore_index=True) if df_ideais_global_list else pd.DataFrame()
@@ -1178,7 +1177,7 @@ def main():
                         if group_by_sex_plot: cols_to_show_ideal.insert(0, 'Sex')
                         st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
 
-                # --- SEÇÃO DE ESTRATIFICAÇÃO (Geração de Planilhas) ---
+                # --- SHEET PRODUCTION GENERATOR SECTION ---
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2.5rem 0;'>", unsafe_allow_html=True)
                 st.markdown(f"<h3 style='color: {COLOR_PRIMARY}; font-size: 1.2rem;'>Generate Stratified Sheets</h3>", unsafe_allow_html=True)
                 
