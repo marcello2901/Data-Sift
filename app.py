@@ -1147,7 +1147,7 @@ def main():
                     valid_haeckel_rows = [r for r in p['ref_limits_list'] if r.get('lri') is not None and r.get('lrs') is not None]
                     
                     if valid_haeckel_rows:
-                        with st.expander("🔬 Calculation Audit Table - Haeckel (State-of-the-Art Structural View)", expanded=True):
+                        with st.expander("🔬 EDA - Haeckel Calculation (State-of-the-Art and Biological Variation)", expanded=True):
                             st.markdown("<p style='font-size:0.9rem; color:#666;'>Verifiable mirror containing the thorough step-by-step math performed to obtain performance limits.</p>", unsafe_allow_html=True)
                             
                             for r_item in valid_haeckel_rows:
