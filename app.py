@@ -614,50 +614,97 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
     temp_df['Data'] = df[col_dados].apply(clean_val).astype('float64')
     temp_df = temp_df.dropna(subset=['Age', 'Data'])
     temp_df = temp_df[temp_df['Age'] >= 0].copy()
-
     temp_df = remove_outliers_tukey(temp_df, 'Data', iterations=5, multiplier=2.0)
 
     if temp_df.empty: return pd.DataFrame(), pd.DataFrame(), [], False
     max_age = int(temp_df['Age'].max())
     if max_age < 1: return pd.DataFrame(), pd.DataFrame(), [], False
 
-    global_mean = temp_df['Data'].mean()
-    global_sd = temp_df['Data'].std(ddof=1)
-    global_cv = (global_sd / global_mean) if global_mean > 0 else 0.10
-    cv_tolerance_margin = global_cv * 0.50
+    # =========================================================================
+    # TRACK 1: HARRIS-BOYD — RECURSIVE HIERARCHICAL PARTITIONING
+    # Finds the globally best cut, then recurses on each partition.
+    # Result: typically 2–5 clinically meaningful cuts instead of 70+.
+    # =========================================================================
+    MIN_N = 30  # minimum subjects per partition to attempt a cut
 
-    # =========================================================================
-    # TRACK 1: STATISTICAL APPROACH (HARRIS-BOYD)
-    # =========================================================================
+    def find_best_cut(df_sub: pd.DataFrame):
+        """Return the single most statistically significant cut in df_sub, or None."""
+        if len(df_sub) < 2 * MIN_N:
+            return None
+
+        min_a = int(df_sub['Age'].min())
+        max_a = int(df_sub['Age'].max())
+        best_cut = None
+        best_z = 0.0
+
+        for age_cutoff in range(min_a, max_a):
+            g1 = df_sub[df_sub['Age'] <= age_cutoff]['Data']
+            g2 = df_sub[df_sub['Age'] > age_cutoff]['Data']
+            n1, n2 = len(g1), len(g2)
+
+            if n1 < MIN_N or n2 < MIN_N:
+                continue
+
+            mean1, mean2 = float(np.mean(g1)), float(np.mean(g2))
+            var1,  var2  = float(np.var(g1, ddof=1)), float(np.var(g2, ddof=1))
+            sd1,   sd2   = np.sqrt(var1), np.sqrt(var2)
+
+            # Fallback seguro: se min(sd1, sd2) for 0, a razão se iguala a 1.0 (não ativando o gatilho falso > 1.5)
+            sd_ratio = max(sd1, sd2) / min(sd1, sd2) if min(sd1, sd2) > 0 else 1.0
+            
+            denom = np.sqrt((var1 / n1) + (var2 / n2))
+            if denom == 0:
+                continue
+                
+            z = abs(mean1 - mean2) / denom
+            z_crit = 3 * np.sqrt((n1 + n2) / 120) if (n1 + n2) < 120 else 3.0
+
+            is_significant = (sd_ratio > 1.5 or z > z_crit)
+
+            # Keep only the most extreme significant cut in this partition
+            if is_significant and z > best_z:
+                best_z = z
+                best_cut = {
+                    'age': age_cutoff,
+                    'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
+                    'Z-score': round(z, 2),
+                    'SD Ratio': round(sd_ratio, 2),
+                    'Mean (<= Cutoff)': round(mean1, 2),
+                    'Mean (> Cutoff)': round(mean2, 2),
+                }
+        return best_cut
+
+    def recursive_partition(df_sub: pd.DataFrame, found: list, depth: int = 0):
+        """
+        Recursively split df_sub.
+        Each call adds at most ONE cut (the best one in this sub-range),
+        then dives into the two resulting halves.
+        depth cap = 6  →  maximum 2^6 - 1 = 63 cuts, in practice 2–5.
+        """
+        if depth >= 6:
+            return
+        best = find_best_cut(df_sub)
+        if best is None:
+            return
+        found.append(best)
+        cut_age = best['age']
+        recursive_partition(df_sub[df_sub['Age'] <= cut_age], found, depth + 1)
+        recursive_partition(df_sub[df_sub['Age'] > cut_age],  found, depth + 1)
+
     possible_cuts_hb = []
-    for age_cutoff in range(1, max_age):
-        mask_g1 = temp_df['Age'] <= age_cutoff
-        mask_g2 = temp_df['Age'] > age_cutoff
-        g1, g2 = temp_df[mask_g1]['Data'], temp_df[mask_g2]['Data']
-        n1, n2 = len(g1), len(g2)
-        
-        if n1 < 30 or n2 < 30: continue
+    recursive_partition(temp_df, possible_cuts_hb)
+    possible_cuts_hb.sort(key=lambda x: x['age'])
 
-        mean1, mean2 = np.mean(g1), np.mean(g2)
-        var1, var2 = np.var(g1, ddof=1), np.var(g2, ddof=1)
-        sd1, sd2 = np.sqrt(var1), np.sqrt(var2)
-
-        sd_ratio = max(sd1, sd2) / min(sd1, sd2) if min(sd1, sd2) > 0 else 0
-        den_z = np.sqrt((var1 / n1) + (var2 / n2)) if (var1 / n1) + (var2 / n2) > 0 else 0.0001
-        z = abs(mean1 - mean2) / den_z
-        z_crit = 3 * np.sqrt((n1 + n2) / 120) if (n1 + n2) < 120 else 3
-
-        if sd_ratio > 1.5 or z > z_crit:
-            possible_cuts_hb.append({
-                'age': age_cutoff, 'z_value': z, 'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
-                'Z-score': round(z, 2), 'SD Ratio': round(sd_ratio, 2),
-                'Mean (<= Cutoff)': round(mean1, 2), 'Mean (> Cutoff)': round(mean2, 2)
-            })
-    df_possible = pd.DataFrame(possible_cuts_hb).sort_values(by='age') if possible_cuts_hb else pd.DataFrame()
+    df_possible = pd.DataFrame(possible_cuts_hb) if possible_cuts_hb else pd.DataFrame()
 
     # =========================================================================
     # TRACK 2: DYNAMIC CRITICAL BOUNDARY EVALUATION (HAECKEL VS AEDM)
     # =========================================================================
+    global_mean = temp_df['Data'].mean()
+    global_sd   = temp_df['Data'].std(ddof=1)
+    global_cv   = (global_sd / global_mean) if global_mean > 0 else 0.10
+    cv_tolerance_margin = global_cv * 0.50
+
     age_groups = temp_df.groupby('Age')['Data'].agg(['mean', 'count']).reset_index()
     age_groups = age_groups.sort_values(by='Age').to_dict('records')
 
@@ -667,44 +714,44 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
 
     if age_groups:
         current_bracket_means = [age_groups[0]['mean']]
-        
+
         for i in range(1, len(age_groups)):
             current_age_data = age_groups[i]
-            reference_mean = np.mean(current_bracket_means)
+            reference_mean   = np.mean(current_bracket_means)
             pct_diff = abs(current_age_data['mean'] - reference_mean) / reference_mean if reference_mean > 0 else 0
-            
+
             is_significant = False
-            margin_disp = 0
-            
+            margin_disp    = 0
+
             limite_casado = encontrar_limites_casados(current_age_data['Age'], sexo_contexto, lista_limites)
-            
+
             h_local = None
             if limite_casado and limite_casado.get('lrs') is not None and limite_casado.get('lrs') > 0:
                 h_local = calcular_limites_haeckel(limite_casado.get('lri'), limite_casado.get('lrs'))
 
             if h_local and reference_mean > 0:
                 any_haeckel_applied = True
-                h_slope = h_local['slope']
-                h_intercept = h_local['intercept']
-                psa_x = (h_slope * reference_mean) + h_intercept
-                
-                pd_margin = 1.645 * psa_x
+                psa_x        = (h_local['slope'] * reference_mean) + h_local['intercept']
+                pd_margin    = 1.645 * psa_x
                 diff_absoluta = abs(current_age_data['mean'] - reference_mean)
                 is_significant = diff_absoluta > pd_margin
-                margin_disp = round(pd_margin, 3)
+                margin_disp  = round(pd_margin, 3)
             else:
                 is_significant = pct_diff > cv_tolerance_margin
-                margin_disp = round(cv_tolerance_margin * 100, 2)
-            
+                margin_disp  = round(cv_tolerance_margin * 100, 2)
+
             if is_significant and current_age_data['count'] >= 5:
-                cutoff_age = int(age_groups[i-1]['Age'])
-                m_less = temp_df[temp_df['Age'] <= cutoff_age]['Data'].mean()
+                cutoff_age = int(age_groups[i - 1]['Age'])
+                m_less    = temp_df[temp_df['Age'] <= cutoff_age]['Data'].mean()
                 m_greater = temp_df[temp_df['Age'] > cutoff_age]['Data'].mean()
-                
+
                 clinical_cuts.append({
-                    'age': cutoff_age, 'Age Cutoff': f"<= {cutoff_age} vs > {cutoff_age}",
-                    'Diff %': round(pct_diff * 100, 2), 'Limit Threshold': margin_disp,
-                    'Mean (<= Cutoff)': round(m_less, 2), 'Mean (> Cutoff)': round(m_greater, 2)
+                    'age': cutoff_age,
+                    'Age Cutoff': f"<= {cutoff_age} vs > {cutoff_age}",
+                    'Diff %':   round(pct_diff * 100, 2),
+                    'Limit Threshold': margin_disp,
+                    'Mean (<= Cutoff)': round(m_less, 2),
+                    'Mean (> Cutoff)':  round(m_greater, 2),
                 })
                 idades_sugeridas.append(cutoff_age)
                 current_bracket_means = [current_age_data['mean']]
