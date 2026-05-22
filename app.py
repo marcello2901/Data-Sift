@@ -682,7 +682,7 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
                 h_intercept = h_local['intercept']
                 psa_x = (h_slope * reference_mean) + h_intercept
                 
-                pd_margin = 1.28 * psa_x
+                pd_margin = 1.645 * psa_x
                 diff_absoluta = abs(current_age_data['mean'] - reference_mean)
                 is_significant = diff_absoluta > pd_margin
                 margin_disp = round(pd_margin, 3)
