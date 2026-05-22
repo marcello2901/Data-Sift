@@ -36,9 +36,11 @@ COLOR_TERTIARY = "#118AB2"    # Medium Teal
 COLOR_BG = "#F8F9FA"          # Off-white Background
 COLOR_CARD_BG = "#FFFFFF"     # Pure White Card Background
 
-# Help Option Icon
-help_icon = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px;'>?</span>"
-HELP_ICON = "<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px; margin-left: 5px;' title='Draws horizontal lines based on stratification cuts.'>?</span>"
+# Função para gerar o Help Option Icon dinamicamente com texto
+def make_help_icon(tooltip_text):
+    return f"<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px; margin-left: 5px;' title='{tooltip_text}'>?</span>"
+
+HELP_ICON_PLATEAU = make_help_icon('Draws horizontal lines based on stratification cuts.')
 
 # CSS Injection for Visual Identity and Card-Based Layout
 st.markdown(f"""
@@ -860,12 +862,12 @@ def to_csv(df):
 # --- USER INTERFACE BUILDER FUNCTIONS ---
 def draw_filter_rules(sex_column_values, column_options): 
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="small")
-    header_cols[1].markdown(f"**Column** {help_icon}", unsafe_allow_html=True)
-    header_cols[2].markdown(f"**Operator** {help_icon}", unsafe_allow_html=True)
-    header_cols[3].markdown(f"**Value** {help_icon}", unsafe_allow_html=True)
-    header_cols[5].markdown(f"**Compound Logic** {help_icon}", unsafe_allow_html=True)
-    header_cols[6].markdown(f"**Cond** {help_icon}", unsafe_allow_html=True)
-    header_cols[7].markdown(f"**Action** {help_icon}", unsafe_allow_html=True)
+    header_cols[1].markdown(f"**Column** {make_help_icon('The name of the column where the filter will be applied.')}", unsafe_allow_html=True)
+    header_cols[2].markdown(f"**Operator** {make_help_icon('Defines the rule logic to set exclusion ranges.')}", unsafe_allow_html=True)
+    header_cols[3].markdown(f"**Value** {make_help_icon('The target value to trigger the exclusion.')}", unsafe_allow_html=True)
+    header_cols[5].markdown(f"**Compound Logic** {make_help_icon('Expands the rule to create AND / OR conditions.')}", unsafe_allow_html=True)
+    header_cols[6].markdown(f"**Cond** {make_help_icon('Allows applying a secondary filter based on sex and/or age conditions.')}", unsafe_allow_html=True)
+    header_cols[7].markdown(f"**Action** {make_help_icon('Clone (C) or Delete (X) the rule.')}", unsafe_allow_html=True)
 
     ops_main, ops_age, ops_central_logic = ["", ">", "<", "=", "Not equal to", "≥", "≤"], ["", ">", "<", "≥", "≤", "="], ["AND", "OR", "BETWEEN"]
 
@@ -1127,7 +1129,7 @@ def main():
                 show_trendlines = False
                 if chart_type in ['Moving Average', 'Moving Median']:
                     show_trendlines = c3.checkbox("chk_plateau", value=True, label_visibility="collapsed", key="trend_chk")
-                    c4.markdown(f"<div style='font-size: 1rem; color: inherit; margin-top: 5px; margin-left: -15px;'>Plateau Lines {HELP_ICON}</div>", unsafe_allow_html=True)
+                    c4.markdown(f"<div style='font-size: 1rem; color: inherit; margin-top: 5px; margin-left: -15px;'>Plateau Lines {HELP_ICON_PLATEAU}</div>", unsafe_allow_html=True)
                 
                 group_by_sex_plot = False
                 selected_sexes_for_plot = []
