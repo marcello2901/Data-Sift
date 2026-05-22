@@ -1165,7 +1165,8 @@ def main():
 
                     with col_grafico:
                         # Repassando a nova variável p['age_filter_range'] para o gerador de gráfico
-                        fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], p['age_filter_range'])
+                        age_range_safe = p.get('age_filter_range', (min_age_data, max_age_data))
+                        fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], age_range_safe)
                         if fig: st.pyplot(fig)
                         
                     # O resto do código (tabelas e exportação) continua igual a partir daqui...
