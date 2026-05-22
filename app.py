@@ -778,7 +778,7 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     else: group_by_sex = False
 
     temp_df = temp_df.dropna(subset=['Age', 'Data'])
-    temp_df = temp_df[temp_df['Age'] >= 0]
+    temp_df = temp_df[(temp_df['Age'] >= age_filter_range[0]) & (temp_df['Age'] <= age_filter_range[1])]
     
     if 'Sex' in temp_df.columns and selected_sexes:
         temp_df = temp_df[temp_df['Sex'].isin(selected_sexes)]
@@ -1110,6 +1110,8 @@ def main():
                 c1, c2, c3, c4, c5 = st.columns([1.5, 1.5, 0.5, 1.5, 2])
                 chart_type = c1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed", key="chart_type_sel")
                 intervalo_plot = c2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", key="age_int_num")
+
+                age_zoom = st.slider("Visual Age Zoom (Focus Range)", min_age_data, max_age_data, (min_age_data, max_age_data))
                 
                 show_trendlines = False
                 if chart_type in ['Moving Average', 'Moving Median']:
@@ -1135,6 +1137,7 @@ def main():
                         'show_trendlines': show_trendlines,
                         'group_by_sex_plot': group_by_sex_plot,
                         'selected_sexes_for_plot': selected_sexes_for_plot,
+                        'age_filter_range': age_zoom,
                         'ref_limits_list': copy.deepcopy(st.session_state.ref_limits_list)
                     }
 
