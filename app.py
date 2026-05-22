@@ -1105,7 +1105,7 @@ def main():
             if not st.session_state.col_idade or not st.session_state.col_dados:
                 st.info("⚠️ Select the **'Age Column'** and **'Data Column'** in Global Settings to enable visual analysis and stratification.")
             else:
-                st.markdown("#### ⚙️ Clinical Reference Boundaries Configuration")
+                st.markdown("#### ⚙️ Reference limits Configuration")
                 draw_reference_limits_matrix(sex_column_values)
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 15px 0;'>", unsafe_allow_html=True)
 
