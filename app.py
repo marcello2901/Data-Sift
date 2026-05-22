@@ -763,6 +763,7 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
     return df_possible, df_ideal, idades_sugeridas, any_haeckel_applied
 
 @st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False)
 def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_type, group_by_sex, selected_sexes, show_trendlines, lista_limites, age_filter_range):
     temp_df = pd.DataFrame()
     temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
@@ -778,6 +779,8 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     else: group_by_sex = False
 
     temp_df = temp_df.dropna(subset=['Age', 'Data'])
+    
+    # O Filtro de idade agora funciona pois a função recebeu o age_filter_range
     temp_df = temp_df[(temp_df['Age'] >= age_filter_range[0]) & (temp_df['Age'] <= age_filter_range[1])]
     
     if 'Sex' in temp_df.columns and selected_sexes:
@@ -1107,17 +1110,27 @@ def main():
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 15px 0;'>", unsafe_allow_html=True)
 
                 st.markdown("#### 📈 Visual & Analytical Settings")
+                
+                # --- CÁLCULO SEGURO DOS LIMITES DE IDADE (Resolve o NameError) ---
+                age_series = pd.to_numeric(df[st.session_state.col_idade], errors='coerce').dropna()
+                if not age_series.empty:
+                    min_age_data = int(age_series.min())
+                    max_age_data = int(age_series.max())
+                else:
+                    min_age_data, max_age_data = 0, 100
+                
                 c1, c2, c3, c4, c5 = st.columns([1.5, 1.5, 0.5, 1.5, 2])
                 chart_type = c1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed", key="chart_type_sel")
                 intervalo_plot = c2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", key="age_int_num")
 
-                age_zoom = st.slider("Visual Age Zoom (Focus Range)", min_age_data, max_age_data, (min_age_data, max_age_data))
+                # O slider agora tem as variáveis declaradas e prontas
+                age_zoom = st.slider("Visual Age Zoom (Focus Range)", min_value=min_age_data, max_value=max_age_data, value=(min_age_data, max_age_data))
                 
                 show_trendlines = False
                 if chart_type in ['Moving Average', 'Moving Median']:
                     show_trendlines = c3.checkbox("chk_plateau", value=True, label_visibility="collapsed", key="trend_chk")
                     c4.markdown(f"<div style='font-size: 1rem; color: inherit; margin-top: 5px; margin-left: -15px;'>Plateau Lines {HELP_ICON}</div>", unsafe_allow_html=True)
-                    
+                
                 group_by_sex_plot = False
                 selected_sexes_for_plot = []
                 if st.session_state.col_sexo and st.session_state.sex_column_is_valid:
@@ -1137,7 +1150,7 @@ def main():
                         'show_trendlines': show_trendlines,
                         'group_by_sex_plot': group_by_sex_plot,
                         'selected_sexes_for_plot': selected_sexes_for_plot,
-                        'age_filter_range': age_zoom,
+                        'age_filter_range': age_zoom, # Salvando o limite selecionado
                         'ref_limits_list': copy.deepcopy(st.session_state.ref_limits_list)
                     }
 
@@ -1151,8 +1164,11 @@ def main():
                     col_grafico, col_hboyd = st.columns([2.8, 1.2], gap="large")
 
                     with col_grafico:
-                        fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'])
+                        # Repassando a nova variável p['age_filter_range'] para o gerador de gráfico
+                        fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], p['age_filter_range'])
                         if fig: st.pyplot(fig)
+                        
+                    # O resto do código (tabelas e exportação) continua igual a partir daqui...
 
                     df_possiveis_global_list = []
                     df_ideais_global_list = []
