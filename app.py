@@ -763,7 +763,7 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
     return df_possible, df_ideal, idades_sugeridas, any_haeckel_applied
 
 @st.cache_data(show_spinner=False)
-def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_type, group_by_sex, selected_sexes, show_trendlines, lista_limites):
+def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_type, group_by_sex, selected_sexes, show_trendlines, lista_limites, age_filter_range):
     temp_df = pd.DataFrame()
     temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
     def clean_val(x):
