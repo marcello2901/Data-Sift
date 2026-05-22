@@ -514,6 +514,12 @@ def remove_outliers_tukey(df, col_dados, iterations=5, multiplier=2.0):
     return df_clean
 
 def calcular_limites_haeckel(lri: float, lrs: float):
+    # Interceptação para conversão automática do LRI para 15% do LRS
+    # se o LRI for vazio (None) ou igual a 0.0, DESDE que o LRS seja um valor válido.
+    if lrs is not None and lrs > 0:
+        if lri is None or lri <= 0:
+            lri = 0.15 * lrs
+            
     if lri is None or lrs is None or lri <= 0 or lrs <= lri:
         return None
     
@@ -673,8 +679,8 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
             limite_casado = encontrar_limites_casados(current_age_data['Age'], sexo_contexto, lista_limites)
             
             h_local = None
-            if limite_casado and limite_casado.get('lri') is not None and limite_casado.get('lrs') is not None:
-                h_local = calcular_limites_haeckel(limite_casado['lri'], limite_casado['lrs'])
+            if limite_casado and limite_casado.get('lrs') is not None and limite_casado.get('lrs') > 0:
+                h_local = calcular_limites_haeckel(limite_casado.get('lri'), limite_casado.get('lrs'))
 
             if h_local and reference_mean > 0:
                 any_haeckel_applied = True
@@ -1144,14 +1150,14 @@ def main():
                     # MULTIPARAMETRIC HAECKEL AUDIT TABLES
                     # =========================================================================
                     st.markdown("<div style='margin-top: 35px;'></div>", unsafe_allow_html=True)
-                    valid_haeckel_rows = [r for r in p['ref_limits_list'] if r.get('lri') is not None and r.get('lrs') is not None]
+                    valid_haeckel_rows = [r for r in p['ref_limits_list'] if r.get('lrs') is not None and r.get('lrs') > 0]
                     
                     if valid_haeckel_rows:
                         with st.expander("🔬 EDA - Haeckel Calculation (State-of-the-Art and Biological Variation)", expanded=True):
                             st.markdown("<p style='font-size:0.9rem; color:#666;'>Verifiable mirror containing the thorough step-by-step math performed to obtain performance limits.</p>", unsafe_allow_html=True)
                             
                             for r_item in valid_haeckel_rows:
-                                h = calcular_limites_haeckel(r_item['lri'], r_item['lrs'])
+                                h = calcular_limites_haeckel(r_item.get('lri'), r_item.get('lrs'))
                                 if not h: continue
                                 
                                 faixa_etaria_label = f"{r_item['age_min']} to {r_item['age_max']} years" if (r_item['age_min'] is not None or r_item['age_max'] is not None) else "Global"
