@@ -52,12 +52,17 @@ st.markdown(f"""
         .stApp {{ background-color: {COLOR_BG} !important; }}
         [data-testid="stStatusWidget"] {{ visibility: hidden; }}
         
-        /* Hide Default Titles to Use Custom HTML */
-        .st-emotion-cache-10trblm h1, .st-emotion-cache-10trblm h2, .st-emotion-cache-10trblm h3 {{
+        /* Força a cor do texto padrão a ser escura para contrastar com o fundo claro */
+        p, span, div[data-testid="stMarkdownContainer"], label {{
+            color: #212529 !important;
+        }}
+
+        /* Hide Default Titles to Use Custom HTML (Corrigido para não usar classes instáveis) */
+        h1, h2, h3, h4, h5, h6 {{
             color: {COLOR_PRIMARY} !important;
             font-weight: 800 !important;
         }}
-
+        
         /* --- CARD STYLES --- */
         .card-container {{
             background-color: {COLOR_CARD_BG};
