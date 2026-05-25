@@ -853,7 +853,10 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
             else: 
                 draw_segments(temp_df, COLOR_SECONDARY, "All")
 
+    # --- NOME DA COLUNA NO EIXO Y ---
+    ax.set_ylabel(col_dados, fontsize=12, labelpad=10)
     ax.set_xlabel('Age (Years)', fontsize=12, labelpad=10)
+    
     ax.set_xticks(range(len(categories)))
     ax.set_xticklabels(categories, rotation=90 if len(categories) > 30 else 45, ha='center' if len(categories) > 30 else 'right', fontsize=8 if len(categories) > 40 else 10)
     plt.grid(axis='y', linestyle=':', alpha=0.6, color='#CFD8DC')
@@ -1129,7 +1132,7 @@ def main():
 
                 st.markdown("#### 📈 Visual & Analytical Settings")
                 
-                # --- CÁLCULO SEGURO DOS LIMITES DE IDADE (Resolve o NameError) ---
+                # --- CÁLCULO SEGURO DOS LIMITES DE IDADE ---
                 age_series = pd.to_numeric(df[st.session_state.col_idade], errors='coerce').dropna()
                 if not age_series.empty:
                     min_age_data = int(age_series.min())
@@ -1141,7 +1144,6 @@ def main():
                 chart_type = c1.selectbox("Chart Type", ["Boxplot", "Moving Average", "Moving Median"], label_visibility="collapsed", key="chart_type_sel")
                 intervalo_plot = c2.number_input("Age interval", min_value=1, max_value=20, value=5, step=1, label_visibility="collapsed", key="age_int_num")
 
-                # O slider agora tem as variáveis declaradas e prontas
                 age_zoom = st.slider("Visual Age Zoom (Focus Range)", min_value=min_age_data, max_value=max_age_data, value=(min_age_data, max_age_data))
                 
                 show_trendlines = False
@@ -1168,7 +1170,7 @@ def main():
                         'show_trendlines': show_trendlines,
                         'group_by_sex_plot': group_by_sex_plot,
                         'selected_sexes_for_plot': selected_sexes_for_plot,
-                        'age_filter_range': age_zoom, # Salvando o limite selecionado
+                        'age_filter_range': age_zoom, 
                         'ref_limits_list': copy.deepcopy(st.session_state.ref_limits_list)
                     }
 
@@ -1182,13 +1184,10 @@ def main():
                     col_grafico, col_hboyd = st.columns([2.8, 1.2], gap="large")
 
                     with col_grafico:
-                        # Repassando a nova variável p['age_filter_range'] para o gerador de gráfico
                         age_range_safe = p.get('age_filter_range', (min_age_data, max_age_data))
                         fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], age_range_safe)
                         if fig: st.pyplot(fig)
                         
-                    # O resto do código (tabelas e exportação) continua igual a partir daqui...
-
                     df_possiveis_global_list = []
                     df_ideais_global_list = []
                     any_haeckel_activated_at_all = False
@@ -1196,7 +1195,6 @@ def main():
                     with col_hboyd:
                         st.markdown('<div class="card-header-bar" style="margin: -1rem -1rem 1rem -1rem; border-radius: 5px 5px 0 0; padding: 10px 15px; font-size: 1.1rem; text-align: center;">Stratification Studies</div>', unsafe_allow_html=True)
                         
-                        # Removido o bloco "with st.spinner" para evitar o flash visual na tela
                         if p['group_by_sex_plot'] and st.session_state.col_sexo:
                             sex_options_hboyd = [v for v in sex_column_values if v]
                             for sex_val in sex_options_hboyd:
@@ -1211,8 +1209,9 @@ def main():
                                 max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max())
                                 titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
                                 
-                                render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_sub)
-                                render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_sub)
+                                # Tabela agora recebe os dados e os nomes das colunas para calcular medianas
+                                render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_sub, sub_df, st.session_state.col_idade, st.session_state.col_dados)
+                                render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_sub, sub_df, st.session_state.col_idade, st.session_state.col_dados)
 
                                 if not df_possiveis.empty:
                                     df_p = df_possiveis.copy(); df_p.insert(0, 'Sex', str(sex_val)); df_possiveis_global_list.append(df_p)
@@ -1224,8 +1223,9 @@ def main():
                             max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
                             titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
                             
-                            render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_full)
-                            render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_full)
+                            # Tabela agora recebe os dados e os nomes das colunas para calcular medianas
+                            render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_full, df, st.session_state.col_idade, st.session_state.col_dados)
+                            render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_full, df, st.session_state.col_idade, st.session_state.col_dados)
 
                             if not df_possiveis.empty: df_possiveis_global_list.append(df_possiveis)
                             if not df_ideais.empty: df_ideais_global_list.append(df_ideais)
@@ -1366,17 +1366,44 @@ def main():
             st.info("⚠️ Please upload a spreadsheet to access the analysis and stratification tools.")
         st.markdown('</div></div>', unsafe_allow_html=True)
 
-def render_mini_tabela(titulo, cuts, max_age):
+# Nova função render_mini_tabela que recebe o df para cálculo da mediana
+def render_mini_tabela(titulo, cuts, max_age, df_context, col_idade, col_dados):
     st.markdown(f"<p style='font-size:0.85rem; color:#41A0C4; font-weight: 600; margin-bottom:5px; margin-top:15px; text-transform: uppercase;'>{titulo}:</p>", unsafe_allow_html=True)
     if not cuts:
         st.markdown(f"<p style='font-weight:bold; font-size:0.95rem; color:{COLOR_SECONDARY};'>No stratification needed</p>", unsafe_allow_html=True)
         return
+    
+    # Limpa e filtra as colunas para o cálculo exato da mediana
+    def clean_val(x):
+        if pd.isna(x): return np.nan
+        x = str(x).replace(',', '.')
+        x = ''.join(c for c in x if c.isdigit() or c == '.' or c == '-')
+        try: return float(x)
+        except: return np.nan
+        
+    t_age = pd.to_numeric(df_context[col_idade], errors='coerce')
+    t_data = pd.to_numeric(df_context[col_dados].apply(clean_val), errors='coerce')
+
+    def get_med_str(amin, amax):
+        # Filtra a faixa etária especificada e extrai a mediana
+        m = t_data[(t_age >= amin) & (t_age <= amax)].median()
+        if pd.isna(m): return "(N/A)"
+        
+        # Formata com 2 casas decimais e substitui ponto por vírgula no padrão brasileiro
+        val_str = f"{m:.2f}".replace('.', ',')
+        return f"({val_str})"
+
     ranges = []
     last_age = 0
+    
     for cut in cuts:
-        ranges.append(f"{last_age} - {cut} years")
+        med_str = get_med_str(last_age, cut)
+        ranges.append(f"{last_age} - {cut} years {med_str}")
         last_age = cut + 1
-    ranges.append(f"{last_age} - {max_age} years")
+        
+    med_str = get_med_str(last_age, max_age)
+    ranges.append(f"{last_age} - {max_age} years {med_str}")
+    
     for r in ranges[:5]: st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY}; margin-bottom:2px;'>{r}</p>", unsafe_allow_html=True)
     if len(ranges) > 5:
         with st.expander(f" (+{len(ranges)-5} groups)"):
