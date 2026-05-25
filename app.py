@@ -132,14 +132,14 @@ st.markdown(f"""
         }}
         span[data-baseweb="tag"] {
             background-color: {COLOR_SECONDARY} !important;
-        }
+        }}
         span[data-baseweb="tag"] span {
             color: #000000 !important;
             font-weight: 600 !important;
-        }
+        }}
         span[data-baseweb="tag"] div[role="button"] svg {
             fill: #000000 !important;
-        }
+        }}
         
         /* Progress Bar */
         .stProgress > div > div > div > div {{ background-color: {COLOR_SECONDARY} !important; }}
