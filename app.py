@@ -1387,11 +1387,11 @@ def render_mini_tabela(titulo, cuts, max_age, df_context, col_idade, col_dados):
     def get_med_str(amin, amax):
         # Filtra a faixa etária especificada e extrai a mediana
         m = t_data[(t_age >= amin) & (t_age <= amax)].median()
-        if pd.isna(m): return "(N/A)"
+        if pd.isna(m): return "- Mediana: N/A"
         
         # Formata com 2 casas decimais e substitui ponto por vírgula no padrão brasileiro
         val_str = f"{m:.2f}".replace('.', ',')
-        return f"({val_str})"
+        return f"- Mediana: {val_str}"
 
     ranges = []
     last_age = 0
