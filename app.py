@@ -57,10 +57,23 @@ st.markdown(f"""
             color: #212529 !important;
         }}
 
-        /* Hide Default Titles to Use Custom HTML (Corrigido para não usar classes instáveis) */
+        /* Hide Default Titles to Use Custom HTML */
         h1, h2, h3, h4, h5, h6 {{
             color: {COLOR_PRIMARY} !important;
             font-weight: 800 !important;
+        }}
+
+        /* --- MULTISELECT TAGS (Filtro de Sexo) --- */
+        div[data-testid="stMultiSelect"] span[data-baseweb="tag"] {{
+            background-color: {COLOR_SECONDARY} !important;
+        }}
+        div[data-testid="stMultiSelect"] span[data-baseweb="tag"] span {{
+            color: #000000 !important;
+            font-weight: 700 !important;
+        }}
+        div[data-testid="stMultiSelect"] span[data-baseweb="tag"] svg {{
+            fill: #000000 !important;
+            color: #000000 !important;
         }}
         
         /* --- CARD STYLES --- */
