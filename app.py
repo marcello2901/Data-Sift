@@ -618,7 +618,7 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
         
     return globais[0] if globais else None
 
-
+@st.cache_data(show_spinner=False)
 def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto="All"):
     temp_df = pd.DataFrame()
     temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
@@ -1196,39 +1196,39 @@ def main():
                     with col_hboyd:
                         st.markdown('<div class="card-header-bar" style="margin: -1rem -1rem 1rem -1rem; border-radius: 5px 5px 0 0; padding: 10px 15px; font-size: 1.1rem; text-align: center;">Stratification Studies</div>', unsafe_allow_html=True)
                         
-                        with st.spinner("Calculating..."):
-                            if p['group_by_sex_plot'] and st.session_state.col_sexo:
-                                sex_options_hboyd = [v for v in sex_column_values if v]
-                                for sex_val in sex_options_hboyd:
-                                    if sex_val not in p['selected_sexes_for_plot']: continue
-                                    st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {sex_val}</b></p>", unsafe_allow_html=True)
-                                    sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)].copy()
-                                    if sub_df.empty: continue
+                        # Removido o bloco "with st.spinner" para evitar o flash visual na tela
+                        if p['group_by_sex_plot'] and st.session_state.col_sexo:
+                            sex_options_hboyd = [v for v in sex_column_values if v]
+                            for sex_val in sex_options_hboyd:
+                                if sex_val not in p['selected_sexes_for_plot']: continue
+                                st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {sex_val}</b></p>", unsafe_allow_html=True)
+                                sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)].copy()
+                                if sub_df.empty: continue
 
-                                    df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], str(sex_val))
-                                    if h_activated: any_haeckel_activated_at_all = True
-                                    
-                                    max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max())
-                                    titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
-                                    
-                                    render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_sub)
-                                    render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_sub)
-
-                                    if not df_possiveis.empty:
-                                        df_p = df_possiveis.copy(); df_p.insert(0, 'Sex', str(sex_val)); df_possiveis_global_list.append(df_p)
-                                    if not df_ideais.empty:
-                                        df_i = df_ideais.copy(); df_i.insert(0, 'Sex', str(sex_val)); df_ideais_global_list.append(df_i)
-                            else:
-                                df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], "All")
+                                df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], str(sex_val))
                                 if h_activated: any_haeckel_activated_at_all = True
-                                max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
+                                
+                                max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max())
                                 titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
                                 
-                                render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_full)
-                                render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_full)
+                                render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_sub)
+                                render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_sub)
 
-                                if not df_possiveis.empty: df_possiveis_global_list.append(df_possiveis)
-                                if not df_ideais.empty: df_ideais_global_list.append(df_ideais)
+                                if not df_possiveis.empty:
+                                    df_p = df_possiveis.copy(); df_p.insert(0, 'Sex', str(sex_val)); df_possiveis_global_list.append(df_p)
+                                if not df_ideais.empty:
+                                    df_i = df_ideais.copy(); df_i.insert(0, 'Sex', str(sex_val)); df_ideais_global_list.append(df_i)
+                        else:
+                            df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], "All")
+                            if h_activated: any_haeckel_activated_at_all = True
+                            max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
+                            titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
+                            
+                            render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_full)
+                            render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_full)
+
+                            if not df_possiveis.empty: df_possiveis_global_list.append(df_possiveis)
+                            if not df_ideais.empty: df_ideais_global_list.append(df_ideais)
                         st.markdown("</div>", unsafe_allow_html=True)
 
                     # =========================================================================
