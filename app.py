@@ -1180,6 +1180,14 @@ def main():
                         age_range_safe = p.get('age_filter_range', (min_age_data, max_age_data))
                         fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], age_range_safe)
 
+                        # --- NOVA PARTE: CONVERTER PARA IMAGEM FIXA ---
+                        img_buffer = None
+                        if fig:
+                            img_buffer = io.BytesIO()
+                            fig.savefig(img_buffer, format='png', bbox_inches='tight', dpi=100)
+                            img_buffer.seek(0)
+                            plt.close(fig)
+
                         # 2. PRÉ-CALCULAR ESTUDOS (HARRIS-BOYD)
                         df_possiveis_global_list = []
                         df_ideais_global_list = []
