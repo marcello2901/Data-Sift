@@ -1117,6 +1117,7 @@ def main():
             st.download_button("⬇️ Download Final Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True, type="secondary")
 
     # --- TAB 3: ANALYSIS & STRATIFICATION ---
+    @st.cache_data(show_spinner=False)
     with tab_stratify:
         st.markdown('<div class="card-with-header">', unsafe_allow_html=True)
         st.markdown(f'<div class="card-header-bar">Visual-Statistical Analysis and Stratification</div>', unsafe_allow_html=True)
