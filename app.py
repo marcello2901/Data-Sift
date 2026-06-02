@@ -11,7 +11,7 @@ import uuid
 import copy
 import zipfile
 import duckdb
-import time 
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
@@ -1035,6 +1035,7 @@ def main():
             if 'filtered_result' in st.session_state: del st.session_state['filtered_result']
             if 'stratified_results' in st.session_state: del st.session_state['stratified_results']
             if 'analysis_params' in st.session_state: del st.session_state['analysis_params']
+            if 'analysis_results' in st.session_state: del st.session_state['analysis_results']
             st.session_state.confirm_stratify = False
             
         uploaded_file = st.file_uploader("Select spreadsheet", type=['csv', 'xlsx', 'xls', 'zip'], on_change=reset_results_on_upload, key="file_uploader_widget", label_visibility="collapsed")
@@ -1164,54 +1165,48 @@ def main():
 
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("🚀 Process Analysis & Generate Charts", type="primary", use_container_width=True):
-                    st.session_state.analysis_params = {
-                        'chart_type': chart_type,
-                        'intervalo_plot': intervalo_plot,
-                        'show_trendlines': show_trendlines,
-                        'group_by_sex_plot': group_by_sex_plot,
-                        'selected_sexes_for_plot': selected_sexes_for_plot,
-                        'age_filter_range': age_zoom, 
-                        'ref_limits_list': copy.deepcopy(st.session_state.ref_limits_list)
-                    }
+                    with st.spinner("Processing Visual-Statistical Analysis..."):
+                        p = {
+                            'chart_type': chart_type,
+                            'intervalo_plot': intervalo_plot,
+                            'show_trendlines': show_trendlines,
+                            'group_by_sex_plot': group_by_sex_plot,
+                            'selected_sexes_for_plot': selected_sexes_for_plot,
+                            'age_filter_range': age_zoom,
+                            'ref_limits_list': copy.deepcopy(st.session_state.ref_limits_list)
+                        }
 
-                # =========================================================================
-                # PROTECTED EXECUTION BLOCK (Only runs when analysis_params exist in state)
-                # =========================================================================
-                if 'analysis_params' in st.session_state:
-                    p = st.session_state.analysis_params
-                    st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 25px 0;'>", unsafe_allow_html=True)
-                    
-                    col_grafico, col_hboyd = st.columns([2.8, 1.2], gap="large")
-
-                    with col_grafico:
+                        # 1. PRÉ-CALCULAR O GRÁFICO
                         age_range_safe = p.get('age_filter_range', (min_age_data, max_age_data))
                         fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], age_range_safe)
-                        if fig: st.pyplot(fig)
-                        
-                    df_possiveis_global_list = []
-                    df_ideais_global_list = []
-                    any_haeckel_activated_at_all = False
 
-                    with col_hboyd:
-                        st.markdown('<div class="card-header-bar" style="margin: -1rem -1rem 1rem -1rem; border-radius: 5px 5px 0 0; padding: 10px 15px; font-size: 1.1rem; text-align: center;">Stratification Studies</div>', unsafe_allow_html=True)
-                        
+                        # 2. PRÉ-CALCULAR ESTUDOS (HARRIS-BOYD)
+                        df_possiveis_global_list = []
+                        df_ideais_global_list = []
+                        any_haeckel_activated_at_all = False
+                        hboyd_render_data = []
+
                         if p['group_by_sex_plot'] and st.session_state.col_sexo:
                             sex_options_hboyd = [v for v in sex_column_values if v]
                             for sex_val in sex_options_hboyd:
                                 if sex_val not in p['selected_sexes_for_plot']: continue
-                                st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {sex_val}</b></p>", unsafe_allow_html=True)
                                 sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)].copy()
                                 if sub_df.empty: continue
 
                                 df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], str(sex_val))
                                 if h_activated: any_haeckel_activated_at_all = True
-                                
+
                                 max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max())
                                 titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
-                                
-                                # Tabela agora recebe os dados e os nomes das colunas para calcular medianas
-                                render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_sub, sub_df, st.session_state.col_idade, st.session_state.col_dados)
-                                render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_sub, sub_df, st.session_state.col_idade, st.session_state.col_dados)
+
+                                hboyd_render_data.append({
+                                    'sex_val': str(sex_val),
+                                    'df_possiveis_age': df_possiveis['age'].tolist() if not df_possiveis.empty else [],
+                                    'cuts_ideais': cuts_ideais,
+                                    'max_age': max_age_sub,
+                                    'titulo_metodo_2': titulo_metodo_2,
+                                    'sub_df': sub_df
+                                })
 
                                 if not df_possiveis.empty:
                                     df_p = df_possiveis.copy(); df_p.insert(0, 'Sex', str(sex_val)); df_possiveis_global_list.append(df_p)
@@ -1222,26 +1217,62 @@ def main():
                             if h_activated: any_haeckel_activated_at_all = True
                             max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
                             titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
-                            
-                            # Tabela agora recebe os dados e os nomes das colunas para calcular medianas
-                            render_mini_tabela("Harris-Boyd (Statistical approach)", df_possiveis['age'].tolist() if not df_possiveis.empty else [], max_age_full, df, st.session_state.col_idade, st.session_state.col_dados)
-                            render_mini_tabela(titulo_metodo_2, cuts_ideais, max_age_full, df, st.session_state.col_idade, st.session_state.col_dados)
+
+                            hboyd_render_data.append({
+                                'sex_val': 'All',
+                                'df_possiveis_age': df_possiveis['age'].tolist() if not df_possiveis.empty else [],
+                                'cuts_ideais': cuts_ideais,
+                                'max_age': max_age_full,
+                                'titulo_metodo_2': titulo_metodo_2,
+                                'sub_df': df
+                            })
 
                             if not df_possiveis.empty: df_possiveis_global_list.append(df_possiveis)
                             if not df_ideais.empty: df_ideais_global_list.append(df_ideais)
+
+                        valid_haeckel_rows = [r for r in p['ref_limits_list'] if r.get('lrs') is not None and r.get('lrs') > 0]
+
+                        # 3. SALVAR ARTEFATOS FINAIS NO ESTADO DA SESSÃO
+                        st.session_state.analysis_results = {
+                            'fig': fig,
+                            'hboyd_render_data': hboyd_render_data,
+                            'group_by_sex_plot': p['group_by_sex_plot'],
+                            'valid_haeckel_rows': valid_haeckel_rows,
+                            'df_possiveis_global_list': df_possiveis_global_list,
+                            'df_ideais_global_list': df_ideais_global_list,
+                            'any_haeckel_activated_at_all': any_haeckel_activated_at_all
+                        }
+
+                # =========================================================================
+                # RENDERING BLOCK (Lê do estado instantaneamente, lag zero no Streamlit)
+                # =========================================================================
+                if 'analysis_results' in st.session_state:
+                    res = st.session_state.analysis_results
+                    st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 25px 0;'>", unsafe_allow_html=True)
+                    
+                    col_grafico, col_hboyd = st.columns([2.8, 1.2], gap="large")
+
+                    with col_grafico:
+                        if res['fig']: st.pyplot(res['fig'])
+
+                    with col_hboyd:
+                        st.markdown('<div class="card-header-bar" style="margin: -1rem -1rem 1rem -1rem; border-radius: 5px 5px 0 0; padding: 10px 15px; font-size: 1.1rem; text-align: center;">Stratification Studies</div>', unsafe_allow_html=True)
+                        
+                        for data in res['hboyd_render_data']:
+                            if res['group_by_sex_plot'] and st.session_state.col_sexo:
+                                st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {data['sex_val']}</b></p>", unsafe_allow_html=True)
+
+                            render_mini_tabela("Harris-Boyd (Statistical approach)", data['df_possiveis_age'], data['max_age'], data['sub_df'], st.session_state.col_idade, st.session_state.col_dados)
+                            render_mini_tabela(data['titulo_metodo_2'], data['cuts_ideais'], data['max_age'], data['sub_df'], st.session_state.col_idade, st.session_state.col_dados)
                         st.markdown("</div>", unsafe_allow_html=True)
 
-                    # =========================================================================
-                    # MULTIPARAMETRIC HAECKEL AUDIT TABLES
-                    # =========================================================================
+                    # --- MULTIPARAMETRIC HAECKEL AUDIT TABLES ---
                     st.markdown("<div style='margin-top: 35px;'></div>", unsafe_allow_html=True)
-                    valid_haeckel_rows = [r for r in p['ref_limits_list'] if r.get('lrs') is not None and r.get('lrs') > 0]
-                    
-                    if valid_haeckel_rows:
+                    if res['valid_haeckel_rows']:
                         with st.expander("🔬 EDA - Haeckel Calculation (State-of-the-Art and Biological Variation)", expanded=True):
                             st.markdown("<p style='font-size:0.9rem; color:#666;'>Verifiable mirror containing the thorough step-by-step math performed to obtain performance limits.</p>", unsafe_allow_html=True)
                             
-                            for r_item in valid_haeckel_rows:
+                            for r_item in res['valid_haeckel_rows']:
                                 h = calcular_limites_haeckel(r_item.get('lri'), r_item.get('lrs'))
                                 if not h: continue
                                 
@@ -1295,23 +1326,21 @@ def main():
                                 """
                                 st.markdown(html_table, unsafe_allow_html=True)
 
-                    # =========================================================================
-                    # SUMMARY DETAILED BOTTOM TABLES
-                    # =========================================================================
-                    df_possiveis_global = pd.concat(df_possiveis_global_list, ignore_index=True) if df_possiveis_global_list else pd.DataFrame()
-                    df_ideais_global = pd.concat(df_ideais_global_list, ignore_index=True) if df_ideais_global_list else pd.DataFrame()
+                    # --- SUMMARY DETAILED BOTTOM TABLES ---
+                    df_possiveis_global = pd.concat(res['df_possiveis_global_list'], ignore_index=True) if res['df_possiveis_global_list'] else pd.DataFrame()
+                    df_ideais_global = pd.concat(res['df_ideais_global_list'], ignore_index=True) if res['df_ideais_global_list'] else pd.DataFrame()
 
                     if not df_possiveis_global.empty:
                         with st.expander("📊 View Detailed Stratification Data Tables", expanded=False):
                             st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold;'>Harris-Boyd (Statistical approach)</h4>", unsafe_allow_html=True)
                             cols_to_show_pos = ['Age Cutoff', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                            if p['group_by_sex_plot']: cols_to_show_pos.insert(0, 'Sex')
+                            if res['group_by_sex_plot']: cols_to_show_pos.insert(0, 'Sex')
                             st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
 
-                            titulo_metodo_2_completo = "EDA Haeckel (Practical approach)" if any_haeckel_activated_at_all else "Empirical Analysis of Dispersion and Means (Empirical approach)"
+                            titulo_metodo_2_completo = "EDA Haeckel (Practical approach)" if res['any_haeckel_activated_at_all'] else "Empirical Analysis of Dispersion and Means (Empirical approach)"
                             st.markdown(f"<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top:25px;'>{titulo_metodo_2_completo}</h4>", unsafe_allow_html=True)
                             cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Limit Threshold', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                            if p['group_by_sex_plot']: cols_to_show_ideal.insert(0, 'Sex')
+                            if res['group_by_sex_plot']: cols_to_show_ideal.insert(0, 'Sex')
                             st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
 
                 # --- SHEET PRODUCTION GENERATOR SECTION ---
