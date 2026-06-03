@@ -1005,20 +1005,7 @@ def draw_reference_limits_matrix(sex_options):
     h_cols[5].markdown("**Action**")
 
     sex_dropdown_options = ["All"] + [x for x in sex_options if x]
-
-    Esse é um erro clássico (e muito chato) do Streamlit chamado "Type Mismatch" (incompatibilidade de tipos).
-
-O que aconteceu foi o seguinte: na versão anterior, as idades estavam programadas para aceitar apenas inteiros (min_value=0). Na nossa atualização para aceitar os meses, eu mudei para min_value=0.0 (com decimal, indicando ser um float).
-
-Quando o Streamlit tenta carregar a página, ele acha na memória (ou tenta jogar na variável) um número inteiro antigo (como 5) em um campo onde o limite mínimo foi configurado como um float (0.0). Como ele exige que os argumentos value, min_value e step sejam rigorosamente do mesmo tipo, o aplicativo "quebra".
-
-Além disso, ao usar aquele meu código com else 0.0, sem querer nós quebramos a função de deixar a idade "em branco" para aplicar a faixa "Global"!
-
-Para corrigir isso, vamos forçar os valores a serem lidos como decimais (float()) apenas se eles existirem, e garantir que voltem a ser None (vazio) caso você queira deixar a caixa em branco.
-
-Vá até a função def draw_reference_limits_matrix(sex_options): (por volta da linha 1000 do seu script) e substitua o laço for inteiro por este abaixo:
-
-Python
+    
     for idx, item in enumerate(st.session_state.ref_limits_list):
         with st.container():
             r_cols = st.columns([2, 1.5, 1.5, 2, 2, 1])
