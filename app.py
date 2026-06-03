@@ -1006,6 +1006,19 @@ def draw_reference_limits_matrix(sex_options):
 
     sex_dropdown_options = ["All"] + [x for x in sex_options if x]
 
+    Esse é um erro clássico (e muito chato) do Streamlit chamado "Type Mismatch" (incompatibilidade de tipos).
+
+O que aconteceu foi o seguinte: na versão anterior, as idades estavam programadas para aceitar apenas inteiros (min_value=0). Na nossa atualização para aceitar os meses, eu mudei para min_value=0.0 (com decimal, indicando ser um float).
+
+Quando o Streamlit tenta carregar a página, ele acha na memória (ou tenta jogar na variável) um número inteiro antigo (como 5) em um campo onde o limite mínimo foi configurado como um float (0.0). Como ele exige que os argumentos value, min_value e step sejam rigorosamente do mesmo tipo, o aplicativo "quebra".
+
+Além disso, ao usar aquele meu código com else 0.0, sem querer nós quebramos a função de deixar a idade "em branco" para aplicar a faixa "Global"!
+
+Para corrigir isso, vamos forçar os valores a serem lidos como decimais (float()) apenas se eles existirem, e garantir que voltem a ser None (vazio) caso você queira deixar a caixa em branco.
+
+Vá até a função def draw_reference_limits_matrix(sex_options): (por volta da linha 1000 do seu script) e substitua o laço for inteiro por este abaixo:
+
+Python
     for idx, item in enumerate(st.session_state.ref_limits_list):
         with st.container():
             r_cols = st.columns([2, 1.5, 1.5, 2, 2, 1])
@@ -1013,10 +1026,16 @@ def draw_reference_limits_matrix(sex_options):
             s_idx = sex_dropdown_options.index(item['sex']) if item['sex'] in sex_dropdown_options else 0
             item['sex'] = r_cols[0].selectbox(f"sex_{item['id']}", sex_dropdown_options, index=s_idx, label_visibility="collapsed")
             
-            item['age_min'] = r_cols[1].number_input(f"amin_{item['id']}", min_value=0.0, value=item['age_min'] if item['age_min'] is not None else 0.0, label_visibility="collapsed")
-            item['age_max'] = r_cols[2].number_input(f"amax_{item['id']}", min_value=0.0, value=item['age_max'] if item['age_max'] is not None else 0.0, label_visibility="collapsed")
-            item['lri'] = r_cols[3].number_input(f"lri_{item['id']}", min_value=0.0, format="%.3f", value=item['lri'], label_visibility="collapsed")
-            item['lrs'] = r_cols[4].number_input(f"lrs_{item['id']}", min_value=0.0, format="%.3f", value=item['lrs'], label_visibility="collapsed")
+            # CORREÇÃO AQUI: Garante que os números sejam convertidos para Float, mas preserva o "None" (vazio)
+            val_min = float(item['age_min']) if item['age_min'] is not None else None
+            val_max = float(item['age_max']) if item['age_max'] is not None else None
+            val_lri = float(item['lri']) if item['lri'] is not None else None
+            val_lrs = float(item['lrs']) if item['lrs'] is not None else None
+
+            item['age_min'] = r_cols[1].number_input(f"amin_{item['id']}", min_value=0.0, value=val_min, step=0.5, label_visibility="collapsed")
+            item['age_max'] = r_cols[2].number_input(f"amax_{item['id']}", min_value=0.0, value=val_max, step=0.5, label_visibility="collapsed")
+            item['lri'] = r_cols[3].number_input(f"lri_{item['id']}", min_value=0.0, format="%.3f", value=val_lri, step=0.1, label_visibility="collapsed")
+            item['lrs'] = r_cols[4].number_input(f"lrs_{item['id']}", min_value=0.0, format="%.3f", value=val_lrs, step=0.1, label_visibility="collapsed")
             
             if r_cols[5].button("X", key=f"del_ref_{item['id']}", help="Remove this reference range"):
                 st.session_state.ref_limits_list.pop(idx)
