@@ -1338,18 +1338,25 @@ def main():
                     df_possiveis_global = pd.concat(res['df_possiveis_global_list'], ignore_index=True) if res['df_possiveis_global_list'] else pd.DataFrame()
                     df_ideais_global = pd.concat(res['df_ideais_global_list'], ignore_index=True) if res['df_ideais_global_list'] else pd.DataFrame()
 
-                    if not df_possiveis_global.empty:
+                    if not df_possiveis_global.empty or not df_ideais_global.empty:
                         with st.expander("📊 View Detailed Stratification Data Tables", expanded=False):
-                            st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold;'>Harris-Boyd (Statistical approach)</h4>", unsafe_allow_html=True)
-                            cols_to_show_pos = ['Age Cutoff', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                            if res['group_by_sex_plot']: cols_to_show_pos.insert(0, 'Sex')
-                            st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
+                            
+                            # Tabela 1: Harris-Boyd
+                            if not df_possiveis_global.empty:
+                                st.markdown("<h4 style='color: #118AB2; font-size:1.2rem; font-weight:bold;'>Harris-Boyd (Statistical approach)</h4>", unsafe_allow_html=True)
+                                cols_to_show_pos = ['Age Cutoff', 'Z-score', 'SD Ratio', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
+                                
+                                # Trava de segurança para a coluna Sex
+                                if res['group_by_sex_plot'] and 'Sex' in df_possiveis_global.columns: 
+                                    cols_to_show_pos.insert(0, 'Sex')
+                                    
+                                st.dataframe(df_possiveis_global[cols_to_show_pos], use_container_width=True, hide_index=True)
 
-                            titulo_metodo_2_completo = "EDA Haeckel (Practical approach)" if res['any_haeckel_activated_at_all'] else "Empirical Analysis of Dispersion and Means (Empirical approach)"
-                            st.markdown(f"<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top:25px;'>{titulo_metodo_2_completo}</h4>", unsafe_allow_html=True)
-                            cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Limit Threshold', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
-                            if res['group_by_sex_plot']: cols_to_show_ideal.insert(0, 'Sex')
-                            st.dataframe(df_ideais_global[cols_to_show_ideal], use_container_width=True, hide_index=True)
+                            # Tabela 2: Haeckel / AEDM
+                            if not df_ideais_global.empty:
+                                titulo_metodo_2_completo = "EDA Haeckel (Practical approach)" if res['any_haeckel_activated_at_all'] else "Empirical Analysis of Dispersion and Means (Empirical approach)"
+                                st.markdown(f"<h4 style='color: #073B4C; font-size:1.2rem; font-weight:bold; margin-top:25px;'>{titulo_metodo_2_completo}</h4>", unsafe_allow_html=True)
+                                cols_to_show_ideal = ['Age Cutoff', 'Diff %', 'Limit Threshold', 'Mean (<= Cutoff)', 'Mean (> Cutoff)']
 
                 # --- SHEET PRODUCTION GENERATOR SECTION ---
                 st.markdown("<hr style='border-color: rgba(7, 59, 76, 0.1); margin: 2.5rem 0;'>", unsafe_allow_html=True)
