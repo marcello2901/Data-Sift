@@ -24,9 +24,9 @@ import base64
 
 # --- PAGE CONFIGURATION & THEME ---
 st.set_page_config(
-    page_title="DataSift",
-    page_icon="favicon.png", 
-    layout="wide" 
+    page_title="DataSift",
+    page_icon="favicon.png", 
+    layout="wide" 
 )
 
 # Color Palette Based on Reference Image
