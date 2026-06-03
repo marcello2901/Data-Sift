@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Version 3.5.0 (State Buffer Architecture & Explicit Analysis Processing)
+# Version 4.0.0 (State Buffer Architecture + Decimal Age/Months Engine)
 import streamlit as st
 import pandas as pd
 from scipy import stats
@@ -237,6 +237,38 @@ DEFAULT_FILTERS = [
     {'id': str(uuid.uuid4()), 'p_check': False, 'p_col': 'COLESTEROL TOTAL E FRACOES.HDL5', 'p_op1': '>', 'p_val1': '80', 'p_expand': False, 'c_check': False},
 ]
 
+
+# --- AGE TRANSFORMATION & FORMATTING HELPERS ---
+def transform_age(val):
+    """
+    Arredonda idades >= 1 para baixo (math.floor).
+    Mantém idades < 1 como decimais exatos para cálculo de meses.
+    """
+    if pd.isna(val): return np.nan
+    try:
+        v = str(val).replace(',', '.')
+        v = float(v)
+        if v < 1 and v >= 0:
+            return v  
+        elif v >= 1:
+            return math.floor(v)  
+        else:
+            return np.nan 
+    except:
+        return np.nan
+
+def format_age_label(val):
+    """
+    Converte visualmente valores decimais (< 1) em meses.
+    Ex: 0.5 vira '6 months'.
+    """
+    if val < 1:
+        meses = int(round(val * 12))
+        if meses == 12: return "1 year" 
+        return f"{meses} month{'s' if meses != 1 else ''}"
+    return f"{int(val)} year{'s' if int(val) != 1 else ''}"
+
+
 # --- PROCESSING ENGINE CLASSES ---
 @st.cache_resource
 def get_data_processor():
@@ -428,33 +460,31 @@ class DataProcessor:
         if age_rule:
             op1, val1 = age_rule.get('op1'), age_rule.get('val1')
             op2, val2 = age_rule.get('op2'), age_rule.get('val2')
-            def get_int(val): 
-                try: return int(float(str(val).replace(',', '.')))
-                except (ValueError, TypeError): return None
+            def get_num(val): 
+                try: return float(str(val).replace(',', '.'))
+                except: return None
 
-            v1_int = get_int(val1)
-            v2_int = get_int(val2)
+            v1_num = get_num(val1)
+            v2_num = get_num(val2)
+            
+            def fmt(num):
+                return f"{int(num)}y" if num >= 1 else f"{int(round(num*12))}m"
 
             if op1 and val1 and not (op2 and val2):
-                if v1_int is not None:
-                    if op1 == '>': name_parts.append(f"Over_{v1_int}_years")
-                    elif op1 in ('≥', '>='): name_parts.append(f"{v1_int}_and_over_years")
-                    elif op1 == '<': name_parts.append(f"Under_{v1_int}_years")
-                    elif op1 in ('≤', '<='): name_parts.append(f"Up_to_{v1_int}_years")
+                if v1_num is not None:
+                    if op1 == '>': name_parts.append(f"Over_{fmt(v1_num)}")
+                    elif op1 in ('≥', '>='): name_parts.append(f"{fmt(v1_num)}_and_over")
+                    elif op1 == '<': name_parts.append(f"Under_{fmt(v1_num)}")
+                    elif op1 in ('≤', '<='): name_parts.append(f"Up_to_{fmt(v1_num)}")
             elif op1 and val1 and op2 and val2:
-                if v1_int is not None and v2_int is not None:
-                    v1_f, v2_f = float(str(val1).replace(',', '.')), float(str(val2).replace(',', '.'))
+                if v1_num is not None and v2_num is not None:
                     bounds = []
-                    if op1 and val1: bounds.append((v1_f, op1))
-                    if op2 and val2: bounds.append((v2_f, op2))
+                    if op1 and val1: bounds.append((v1_num, op1))
+                    if op2 and val2: bounds.append((v2_num, op2))
                     bounds.sort(key=lambda x: x[0])
                     low_val_f, low_op = bounds[0]
                     high_val_f, high_op = bounds[1]
-                    low_bound = int(low_val_f) if low_op in ('≥', '>=') else int(low_val_f + 1) if low_op == '>' else int(low_val_f)
-                    high_bound = int(high_val_f) if high_op in ('≤', '<=') else int(high_val_f - 1) if high_op == '<' else int(high_val_f)
-                    
-                    if low_bound > high_bound: name_parts.append("Invalid_range")
-                    else: name_parts.append(f"{low_bound}_to_{high_bound}_years")
+                    name_parts.append(f"{fmt(low_val_f)}_to_{fmt(high_val_f)}")
         if sex_rule:
             sex_name = str(sex_rule.get('value', '')).replace(' ', '_')
             if sex_name: name_parts.append(sex_name)
@@ -535,7 +565,6 @@ def remove_outliers_tukey(df, col_dados, iterations=5, multiplier=2.0):
 
 def calcular_limites_haeckel(lri: float, lrs: float):
     # Interceptação para conversão automática do LRI para 15% do LRS
-    # se o LRI for vazio (None) ou igual a 0.0, DESDE que o LRS seja um valor válido.
     if lrs is not None and lrs > 0:
         if lri is None or lri <= 0:
             lri = 0.15 * lrs
@@ -621,7 +650,8 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
 @st.cache_data(show_spinner=False)
 def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto="All"):
     temp_df = pd.DataFrame()
-    temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
+    # APLICANDO A TRANSFORMAÇÃO DE IDADE (Meses e Arredondamento)
+    temp_df['Age'] = df[col_idade].apply(transform_age)
 
     def clean_val(x):
         if pd.isna(x): return np.nan
@@ -636,27 +666,23 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
     temp_df = remove_outliers_tukey(temp_df, 'Data', iterations=5, multiplier=2.0)
 
     if temp_df.empty: return pd.DataFrame(), pd.DataFrame(), [], False
-    max_age = int(temp_df['Age'].max())
-    if max_age < 1: return pd.DataFrame(), pd.DataFrame(), [], False
 
     # =========================================================================
     # TRACK 1: HARRIS-BOYD — RECURSIVE HIERARCHICAL PARTITIONING
-    # Finds the globally best cut, then recurses on each partition.
-    # Result: typically 2–5 clinically meaningful cuts instead of 70+.
     # =========================================================================
-    MIN_N = 30  # minimum subjects per partition to attempt a cut
+    MIN_N = 30  
 
     def find_best_cut(df_sub: pd.DataFrame):
-        """Return the single most statistically significant cut in df_sub, or None."""
         if len(df_sub) < 2 * MIN_N:
             return None
 
-        min_a = int(df_sub['Age'].min())
-        max_a = int(df_sub['Age'].max())
+        unique_ages = sorted(df_sub['Age'].unique())
+        if len(unique_ages) < 2: return None
+
         best_cut = None
         best_z = 0.0
 
-        for age_cutoff in range(min_a, max_a):
+        for age_cutoff in unique_ages[:-1]:
             g1 = df_sub[df_sub['Age'] <= age_cutoff]['Data']
             g2 = df_sub[df_sub['Age'] > age_cutoff]['Data']
             n1, n2 = len(g1), len(g2)
@@ -668,7 +694,6 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
             var1,  var2  = float(np.var(g1, ddof=1)), float(np.var(g2, ddof=1))
             sd1,   sd2   = np.sqrt(var1), np.sqrt(var2)
 
-            # Fallback seguro: se min(sd1, sd2) for 0, a razão se iguala a 1.0 (não ativando o gatilho falso > 1.5)
             sd_ratio = max(sd1, sd2) / min(sd1, sd2) if min(sd1, sd2) > 0 else 1.0
             
             denom = np.sqrt((var1 / n1) + (var2 / n2))
@@ -680,12 +705,12 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
 
             is_significant = (sd_ratio > 1.5 or z > z_crit)
 
-            # Keep only the most extreme significant cut in this partition
             if is_significant and z > best_z:
                 best_z = z
+                lbl = format_age_label(age_cutoff)
                 best_cut = {
                     'age': age_cutoff,
-                    'Age Cutoff': f"<= {age_cutoff} vs > {age_cutoff}",
+                    'Age Cutoff': f"<= {lbl} vs > {lbl}",
                     'Z-score': round(z, 2),
                     'SD Ratio': round(sd_ratio, 2),
                     'Mean (<= Cutoff)': round(mean1, 2),
@@ -694,12 +719,6 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
         return best_cut
 
     def recursive_partition(df_sub: pd.DataFrame, found: list, depth: int = 0):
-        """
-        Recursively split df_sub.
-        Each call adds at most ONE cut (the best one in this sub-range),
-        then dives into the two resulting halves.
-        depth cap = 6  →  maximum 2^6 - 1 = 63 cuts, in practice 2–5.
-        """
         if depth >= 6:
             return
         best = find_best_cut(df_sub)
@@ -760,13 +779,15 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
                 margin_disp  = round(cv_tolerance_margin * 100, 2)
 
             if is_significant and current_age_data['count'] >= 5:
-                cutoff_age = int(age_groups[i - 1]['Age'])
+                cutoff_age = age_groups[i - 1]['Age']
                 m_less    = temp_df[temp_df['Age'] <= cutoff_age]['Data'].mean()
                 m_greater = temp_df[temp_df['Age'] > cutoff_age]['Data'].mean()
+                
+                lbl = format_age_label(cutoff_age)
 
                 clinical_cuts.append({
                     'age': cutoff_age,
-                    'Age Cutoff': f"<= {cutoff_age} vs > {cutoff_age}",
+                    'Age Cutoff': f"<= {lbl} vs > {lbl}",
                     'Diff %':   round(pct_diff * 100, 2),
                     'Limit Threshold': margin_disp,
                     'Mean (<= Cutoff)': round(m_less, 2),
@@ -784,21 +805,21 @@ def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto=
 
 def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_type, group_by_sex, selected_sexes, show_trendlines, lista_limites, age_filter_range):
     temp_df = pd.DataFrame()
-    temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
+    temp_df['Age'] = df[col_idade].apply(transform_age)
+    
     def clean_val(x):
         if pd.isna(x): return np.nan
         x = str(x).replace(',', '.')
         x = ''.join(c for c in x if c.isdigit() or c == '.' or c == '-')
         try: return float(x)
         except: return np.nan
+        
     temp_df['Data'] = pd.to_numeric(df[col_dados].apply(clean_val), errors='coerce')
     
     if col_sexo and col_sexo in df.columns: temp_df['Sex'] = df[col_sexo].astype(str)
     else: group_by_sex = False
 
     temp_df = temp_df.dropna(subset=['Age', 'Data'])
-    
-    # O Filtro de idade agora funciona pois a função recebeu o age_filter_range
     temp_df = temp_df[(temp_df['Age'] >= age_filter_range[0]) & (temp_df['Age'] <= age_filter_range[1])]
     
     if 'Sex' in temp_df.columns and selected_sexes:
@@ -806,16 +827,28 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
         
     if temp_df.empty: return None
 
-    min_age, max_age = int(temp_df['Age'].min()), int(temp_df['Age'].max())
+    min_age, max_age = temp_df['Age'].min(), temp_df['Age'].max()
 
     if intervalo > 1:
-        min_bin, max_bin = (min_age // intervalo) * intervalo, (max_age // intervalo) * intervalo
-        temp_df['Age_Bin'] = (temp_df['Age'] // intervalo) * intervalo
+        min_bin = math.floor(min_age / intervalo) * intervalo
+        max_bin = math.floor(max_age / intervalo) * intervalo
+        temp_df['Age_Bin'] = np.floor(temp_df['Age'] / intervalo) * intervalo
         temp_df['Age_Label'] = temp_df['Age_Bin'].astype(int).astype(str) + " to " + (temp_df['Age_Bin'] + intervalo - 1).astype(int).astype(str)
-        categories = [f"{b} to {b + intervalo - 1}" for b in range(min_bin, max_bin + 1, int(intervalo))]
+        categories = [f"{int(b)} to {int(b + intervalo - 1)}" for b in np.arange(min_bin, max_bin + 1, intervalo)]
     else:
-        temp_df['Age_Label'] = temp_df['Age'].astype(int).astype(str)
-        categories = [str(age) for age in range(min_age, max_age + 1)]
+        # Snap decimal fractions to nearest rounded fraction representation to group X-axis safely
+        def snap_age(val):
+            if val < 1: return round(val * 12) / 12.0
+            return float(val)
+        
+        temp_df['Age_Plot'] = temp_df['Age'].apply(snap_age)
+        unique_sorted = sorted(temp_df['Age_Plot'].unique())
+        categories = []
+        for v in unique_sorted:
+            lbl = format_age_label(v)
+            if lbl not in categories: categories.append(lbl)
+            
+        temp_df['Age_Label'] = temp_df['Age_Plot'].apply(format_age_label)
         
     temp_df['Age_Label'] = pd.Categorical(temp_df['Age_Label'], categories=categories, ordered=True)
     x_col = 'Age_Label'
@@ -837,9 +870,9 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
             metric_str = 'mean' if chart_type == 'Moving Average' else 'median'
             def draw_segments(df_sub, color, s_context):
                 _, _, cuts, _ = run_harris_boyd(df_sub, 'Age', 'Data', lista_limites, s_context)
-                starts, ends = [0] + [c + 1 for c in cuts], cuts + [999]
+                starts, ends = [-0.1] + [c for c in cuts], cuts + [999]
                 for s, e in zip(starts, ends):
-                    mask = (df_sub['Age'] >= s) & (df_sub['Age'] <= e)
+                    mask = (df_sub['Age'] > s) & (df_sub['Age'] <= e)
                     if mask.sum() == 0: continue
                     val = df_sub[mask]['Data'].mean() if metric_str == 'mean' else df_sub[mask]['Data'].median()
                     x_positions = [categories.index(lbl) for lbl in df_sub[mask]['Age_Label'].unique() if lbl in categories]
@@ -853,9 +886,8 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
             else: 
                 draw_segments(temp_df, COLOR_SECONDARY, "All")
 
-    # --- NOME DA COLUNA NO EIXO Y ---
     ax.set_ylabel(col_dados, fontsize=12, labelpad=10)
-    ax.set_xlabel('Age (Years)', fontsize=12, labelpad=10)
+    ax.set_xlabel('Age (Years / Months)', fontsize=12, labelpad=10)
     
     ax.set_xticks(range(len(categories)))
     ax.set_xticklabels(categories, rotation=90 if len(categories) > 30 else 45, ha='center' if len(categories) > 30 else 'right', fontsize=8 if len(categories) > 40 else 10)
@@ -981,13 +1013,15 @@ def draw_reference_limits_matrix(sex_options):
             s_idx = sex_dropdown_options.index(item['sex']) if item['sex'] in sex_dropdown_options else 0
             item['sex'] = r_cols[0].selectbox(f"sex_{item['id']}", sex_dropdown_options, index=s_idx, label_visibility="collapsed")
             
-            item['age_min'] = r_cols[1].number_input(f"amin_{item['id']}", min_value=0, value=item['age_min'], step=1, label_visibility="collapsed")
-            item['age_max'] = r_cols[2].number_input(f"amax_{item['id']}", min_value=0, value=item['age_max'], step=1, label_visibility="collapsed")
+            item['age_min'] = r_cols[1].number_input(f"amin_{item['id']}", min_value=0.0, value=item['age_min'] if item['age_min'] is not None else 0.0, label_visibility="collapsed")
+            item['age_max'] = r_cols[2].number_input(f"amax_{item['id']}", min_value=0.0, value=item['age_max'] if item['age_max'] is not None else 0.0, label_visibility="collapsed")
             item['lri'] = r_cols[3].number_input(f"lri_{item['id']}", min_value=0.0, format="%.3f", value=item['lri'], label_visibility="collapsed")
             item['lrs'] = r_cols[4].number_input(f"lrs_{item['id']}", min_value=0.0, format="%.3f", value=item['lrs'], label_visibility="collapsed")
             
             if r_cols[5].button("X", key=f"del_ref_{item['id']}", help="Remove this reference range"):
                 st.session_state.ref_limits_list.pop(idx)
+                # Reseta resultados visuais ao apagar referência (Fix do Lag anterior)
+                if 'analysis_results' in st.session_state: del st.session_state['analysis_results']
                 st.rerun()
 
     if st.button("+ Add New Reference Interval Row", type="secondary"):
@@ -1133,11 +1167,11 @@ def main():
 
                 st.markdown("#### 📈 Visual & Analytical Settings")
                 
-                # --- CÁLCULO SEGURO DOS LIMITES DE IDADE ---
+                # CÁLCULO SEGURO E ARREDONDADO DOS LIMITES PARA O SLIDER
                 age_series = pd.to_numeric(df[st.session_state.col_idade], errors='coerce').dropna()
                 if not age_series.empty:
-                    min_age_data = int(age_series.min())
-                    max_age_data = int(age_series.max())
+                    min_age_data = int(math.floor(age_series.min()))
+                    max_age_data = int(math.ceil(age_series.max()))
                 else:
                     min_age_data, max_age_data = 0, 100
                 
@@ -1164,6 +1198,10 @@ def main():
                         selected_sexes_for_plot = sex_options_for_plot
 
                 st.markdown("<br>", unsafe_allow_html=True)
+                
+                # =========================================================================
+                # PROTECTED EXECUTION BLOCK (Engine State-Buffer)
+                # =========================================================================
                 if st.button("🚀 Process Analysis & Generate Charts", type="primary", use_container_width=True):
                     with st.spinner("Processing Visual-Statistical Analysis..."):
                         p = {
@@ -1176,11 +1214,10 @@ def main():
                             'ref_limits_list': copy.deepcopy(st.session_state.ref_limits_list)
                         }
 
-                        # 1. PRÉ-CALCULAR O GRÁFICO
+                        # 1. PRÉ-CALCULAR GRÁFICO (Convertendo para imagem para zero-lag)
                         age_range_safe = p.get('age_filter_range', (min_age_data, max_age_data))
                         fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], age_range_safe)
 
-                        # --- NOVA PARTE: CONVERTER PARA IMAGEM FIXA ---
                         img_buffer = None
                         if fig:
                             img_buffer = io.BytesIO()
@@ -1204,14 +1241,12 @@ def main():
                                 df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], str(sex_val))
                                 if h_activated: any_haeckel_activated_at_all = True
 
-                                max_age_sub = int(pd.to_numeric(sub_df[st.session_state.col_idade], errors='coerce').max())
                                 titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
 
                                 hboyd_render_data.append({
                                     'sex_val': str(sex_val),
                                     'df_possiveis_age': df_possiveis['age'].tolist() if not df_possiveis.empty else [],
                                     'cuts_ideais': cuts_ideais,
-                                    'max_age': max_age_sub,
                                     'titulo_metodo_2': titulo_metodo_2,
                                     'sub_df': sub_df
                                 })
@@ -1223,14 +1258,12 @@ def main():
                         else:
                             df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], "All")
                             if h_activated: any_haeckel_activated_at_all = True
-                            max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
                             titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
 
                             hboyd_render_data.append({
                                 'sex_val': 'All',
                                 'df_possiveis_age': df_possiveis['age'].tolist() if not df_possiveis.empty else [],
                                 'cuts_ideais': cuts_ideais,
-                                'max_age': max_age_full,
                                 'titulo_metodo_2': titulo_metodo_2,
                                 'sub_df': df
                             })
@@ -1240,9 +1273,9 @@ def main():
 
                         valid_haeckel_rows = [r for r in p['ref_limits_list'] if r.get('lrs') is not None and r.get('lrs') > 0]
 
-                        # 3. SALVAR ARTEFATOS FINAIS NO ESTADO DA SESSÃO
+                        # 3. SALVAR ARTEFATOS FINAIS
                         st.session_state.analysis_results = {
-                            'fig': fig,
+                            'img_buffer': img_buffer,
                             'hboyd_render_data': hboyd_render_data,
                             'group_by_sex_plot': p['group_by_sex_plot'],
                             'valid_haeckel_rows': valid_haeckel_rows,
@@ -1252,7 +1285,7 @@ def main():
                         }
 
                 # =========================================================================
-                # RENDERING BLOCK (Lê do estado instantaneamente, lag zero no Streamlit)
+                # RENDERING BLOCK (Lag zero visual)
                 # =========================================================================
                 if 'analysis_results' in st.session_state:
                     res = st.session_state.analysis_results
@@ -1261,7 +1294,8 @@ def main():
                     col_grafico, col_hboyd = st.columns([2.8, 1.2], gap="large")
 
                     with col_grafico:
-                        if res['fig']: st.pyplot(res['fig'])
+                        if res.get('img_buffer'): 
+                            st.image(res['img_buffer'], use_container_width=True)
 
                     with col_hboyd:
                         st.markdown('<div class="card-header-bar" style="margin: -1rem -1rem 1rem -1rem; border-radius: 5px 5px 0 0; padding: 10px 15px; font-size: 1.1rem; text-align: center;">Stratification Studies</div>', unsafe_allow_html=True)
@@ -1270,8 +1304,8 @@ def main():
                             if res['group_by_sex_plot'] and st.session_state.col_sexo:
                                 st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {data['sex_val']}</b></p>", unsafe_allow_html=True)
 
-                            render_mini_tabela("Harris-Boyd (Statistical approach)", data['df_possiveis_age'], data['max_age'], data['sub_df'], st.session_state.col_idade, st.session_state.col_dados)
-                            render_mini_tabela(data['titulo_metodo_2'], data['cuts_ideais'], data['max_age'], data['sub_df'], st.session_state.col_idade, st.session_state.col_dados)
+                            render_mini_tabela("Harris-Boyd (Statistical approach)", data['df_possiveis_age'], data['sub_df'], st.session_state.col_idade, st.session_state.col_dados)
+                            render_mini_tabela(data['titulo_metodo_2'], data['cuts_ideais'], data['sub_df'], st.session_state.col_idade, st.session_state.col_dados)
                         st.markdown("</div>", unsafe_allow_html=True)
 
                     # --- MULTIPARAMETRIC HAECKEL AUDIT TABLES ---
@@ -1403,14 +1437,13 @@ def main():
             st.info("⚠️ Please upload a spreadsheet to access the analysis and stratification tools.")
         st.markdown('</div></div>', unsafe_allow_html=True)
 
-# Nova função render_mini_tabela que recebe o df para cálculo da mediana
-def render_mini_tabela(titulo, cuts, max_age, df_context, col_idade, col_dados):
+# Nova função render_mini_tabela ajustada para lidar com os meses e blocos de forma inteligente
+def render_mini_tabela(titulo, cuts, df_context, col_idade, col_dados):
     st.markdown(f"<p style='font-size:0.85rem; color:#41A0C4; font-weight: 600; margin-bottom:5px; margin-top:15px; text-transform: uppercase;'>{titulo}:</p>", unsafe_allow_html=True)
     if not cuts:
         st.markdown(f"<p style='font-weight:bold; font-size:0.95rem; color:{COLOR_SECONDARY};'>No stratification needed</p>", unsafe_allow_html=True)
         return
     
-    # Limpa e filtra as colunas para o cálculo exato da mediana
     def clean_val(x):
         if pd.isna(x): return np.nan
         x = str(x).replace(',', '.')
@@ -1418,28 +1451,31 @@ def render_mini_tabela(titulo, cuts, max_age, df_context, col_idade, col_dados):
         try: return float(x)
         except: return np.nan
         
-    t_age = pd.to_numeric(df_context[col_idade], errors='coerce')
+    t_age = df_context[col_idade].apply(transform_age)
     t_data = pd.to_numeric(df_context[col_dados].apply(clean_val), errors='coerce')
 
-    def get_med_str(amin, amax):
-        # Filtra a faixa etária especificada e extrai a mediana
-        m = t_data[(t_age >= amin) & (t_age <= amax)].median()
-        if pd.isna(m): return "- Mediana: N/A"
-        
-        # Formata com 2 casas decimais e substitui ponto por vírgula no padrão brasileiro
+    def get_med_str(mask):
+        m = t_data[mask].median()
+        if pd.isna(m): return "- Median: N/A"
         val_str = f"{m:.2f}".replace('.', ',')
-        return f"- Mediana: {val_str}"
+        return f"- Median: {val_str}"
 
     ranges = []
-    last_age = 0
     
-    for cut in cuts:
-        med_str = get_med_str(last_age, cut)
-        ranges.append(f"{last_age} - {cut} years {med_str}")
-        last_age = cut + 1
+    # Primeiro corte (Até o primeiro valor)
+    mask = (t_age <= cuts[0])
+    ranges.append(f"Up to {format_age_label(cuts[0])} {get_med_str(mask)}")
+    
+    # Cortes do meio (Entre X e Y)
+    for i in range(len(cuts)-1):
+        c1 = cuts[i]
+        c2 = cuts[i+1]
+        mask = (t_age > c1) & (t_age <= c2)
+        ranges.append(f"> {format_age_label(c1)} to {format_age_label(c2)} {get_med_str(mask)}")
         
-    med_str = get_med_str(last_age, max_age)
-    ranges.append(f"{last_age} - {max_age} years {med_str}")
+    # Último corte (Acima do último valor)
+    mask = (t_age > cuts[-1])
+    ranges.append(f"Over {format_age_label(cuts[-1])} {get_med_str(mask)}")
     
     for r in ranges[:5]: st.markdown(f"<p style='font-weight:bold; font-size:1.0rem; color:{COLOR_SECONDARY}; margin-bottom:2px;'>{r}</p>", unsafe_allow_html=True)
     if len(ranges) > 5:
