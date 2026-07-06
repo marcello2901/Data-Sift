@@ -465,6 +465,18 @@ class DataProcessor:
 # --- CACHED UTILITY FUNCTIONS ---
 
 @st.cache_data(show_spinner="Reading file...")
+def _read_csv_engine(path, sep, decimal, encoding):
+    """
+    Lê CSV com PyArrow (rápido). Se o PyArrow falhar — por exemplo em linhas/campos
+    muito grandes, que geram 'straddling object straddles two block boundaries' —,
+    refaz a leitura com o parser C padrão do pandas, que não tem essa limitação de
+    blocos. Colunas, valores e dtypes resultantes são equivalentes aos do PyArrow.
+    """
+    try:
+        return pd.read_csv(path, sep=sep, decimal=decimal, encoding=encoding, engine='pyarrow')
+    except Exception:
+        return pd.read_csv(path, sep=sep, decimal=decimal, encoding=encoding, engine='c', low_memory=False)
+        
 def load_dataframe(uploaded_file):
     if uploaded_file is None: return None
     try:
@@ -488,13 +500,13 @@ def load_dataframe(uploaded_file):
                     inner_path = inner_tmp.name
                 inner_filename = valid_files[0].lower()
                 if inner_filename.endswith('.csv'):
-                    try: df = pd.read_csv(inner_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
-                    except Exception: df = pd.read_csv(inner_path, sep=',', decimal='.', encoding='utf-8', engine='pyarrow')
+                    try: df = _read_csv_engine(inner_path, ';', ',', 'latin-1')
+                    except Exception: df = _read_csv_engine(inner_path, ',', '.', 'utf-8')
                 else: df = pd.read_excel(inner_path, engine='openpyxl')
                 os.remove(inner_path)
         elif file_name.endswith('.csv'):
-            try: df = pd.read_csv(tmp_path, sep=';', decimal=',', encoding='latin-1', engine='pyarrow')
-            except Exception: df = pd.read_csv(tmp_path, sep=',', decimal='.', encoding='utf-8', engine='pyarrow')
+            try: df = _read_csv_engine(tmp_path, ';', ',', 'latin-1')
+            except Exception: df = _read_csv_engine(tmp_path, ',', '.', 'utf-8')
         else:
             df = pd.read_excel(tmp_path, engine='openpyxl')
 
