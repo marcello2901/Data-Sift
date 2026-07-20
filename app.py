@@ -893,8 +893,34 @@ def to_csv(df):
     return df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
 
 # --- USER INTERFACE BUILDER FUNCTIONS ---
-def draw_filter_rules(sex_column_values, column_options): 
+def draw_filter_rules(sex_column_values, column_options):
+    # --- MASTER CHECKBOX ---
+    # Sits at the top of the activation column and reflects/controls all rules
+    # at once (select-all idiom). Kept in sync every run: if every rule is
+    # active it shows checked; toggling it activates/deactivates all rules.
+    # Read each rule's live widget state (p_check_<id>), which is already
+    # updated at the top of the run, rather than the rule dict (only refreshed
+    # later inside the loop) — otherwise the master lags one interaction behind.
+    if st.session_state.filter_rules:
+        st.session_state["master_filter_check"] = all(
+            st.session_state.get(f"p_check_{r['id']}", r.get('p_check', True))
+            for r in st.session_state.filter_rules
+        )
+
+    def _toggle_all_filter_rules():
+        new_val = st.session_state.master_filter_check
+        for r in st.session_state.filter_rules:
+            r['p_check'] = new_val
+            st.session_state[f"p_check_{r['id']}"] = new_val
+
     header_cols = st.columns([0.5, 3, 2, 2, 0.5, 3, 1.2, 1.5], gap="small")
+    header_cols[0].checkbox(
+        "Toggle all rules",
+        key="master_filter_check",
+        on_change=_toggle_all_filter_rules,
+        help="Activate or deactivate all filter rules at once.",
+        label_visibility="collapsed",
+    )
     header_cols[1].markdown(f"**Column** {make_help_icon('The name of the column where the filter will be applied.')}", unsafe_allow_html=True)
     header_cols[2].markdown(f"**Operator** {make_help_icon('Defines the rule logic to set exclusion ranges.')}", unsafe_allow_html=True)
     header_cols[3].markdown(f"**Value** {make_help_icon('The target value to trigger the exclusion.')}", unsafe_allow_html=True)
@@ -1037,7 +1063,14 @@ def main():
         if logo_base64: st.markdown(f'<div style="display: flex; justify-content: center; margin-bottom: 1rem;"><img src="data:image/png;base64,{logo_base64}" width="150"></div>', unsafe_allow_html=True)
         st.markdown("---")
         topic = st.selectbox("Select Screen Mode", list(MANUAL_CONTENT.keys()))
-        st.markdown(MANUAL_CONTENT[topic], unsafe_allow_html=True)
+        # NOTE: Content in MANUAL_CONTENT is pure markdown (no HTML tags), so
+        # unsafe_allow_html is unnecessary here. Enabling it routes rendering
+        # through react-markdown's rehype-raw pipeline, which fails to reconcile
+        # the DOM when switching between topics with different structures,
+        # raising "NotFoundError: Failed to execute 'removeChild' on 'Node'".
+        # Rendering as plain markdown avoids that crash.
+        with st.container():
+            st.markdown(MANUAL_CONTENT[topic])
 
     if logo_base64: st.markdown(f'<div style="display: flex; justify-content: center; margin-top: 1rem; margin-bottom: 2rem;"><img src="data:image/png;base64,{logo_base64}" width="220"></div>', unsafe_allow_html=True)
 
@@ -1045,6 +1078,7 @@ def main():
     with st.expander("📁 1. Global Settings (Upload Spreadsheet)", expanded=True):
         def reset_results_on_upload():
             if 'filtered_result' in st.session_state: del st.session_state['filtered_result']
+            if 'filtered_df' in st.session_state: del st.session_state['filtered_df']
             if 'stratified_results' in st.session_state: del st.session_state['stratified_results']
             if 'analysis_params' in st.session_state: del st.session_state['analysis_params']
             if 'analysis_results' in st.session_state: del st.session_state['analysis_results']
@@ -1125,6 +1159,10 @@ def main():
                         file_bytes = to_excel(filtered_df) if is_excel else to_csv(filtered_df)
                         timestamp = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d_%H%M%S")
                         st.session_state.filtered_result = (file_bytes, f"Filtered_Sheet_{timestamp}.{'xlsx' if is_excel else 'csv'}")
+                        # Keep the filtered DataFrame in memory so it can feed the
+                        # Stratification Tool directly (no download/re-upload round-trip).
+                        # It is a subset of the original (<= rows) and is cleared on new upload.
+                        st.session_state.filtered_df = filtered_df
                     else: st.success("No rows remaining after filters applied.")
         if 'filtered_result' in st.session_state:
             st.download_button("⬇️ Download Final Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True, type="secondary")
@@ -1136,6 +1174,25 @@ def main():
         st.markdown('<div class="card-content-area">', unsafe_allow_html=True)
 
         if df is not None:
+            # --- DATA SOURCE SELECTOR (original upload vs. last filtered result) ---
+            # Lets the user run the analysis/stratification on the sheet just produced
+            # by the Filter Tool without downloading and re-uploading it.
+            source_df = df
+            if st.session_state.get('filtered_df') is not None:
+                choice = st.radio(
+                    "Data source for analysis & stratification",
+                    ["Uploaded spreadsheet", "Last filtered result"],
+                    horizontal=True,
+                    key="strat_data_source",
+                    help="Use the spreadsheet you uploaded, or the sheet produced by the Filter Tool — no re-upload needed.",
+                )
+                if choice == "Last filtered result":
+                    source_df = st.session_state.filtered_df
+                st.caption(
+                    f"Using **{choice}** — {len(source_df):,} rows "
+                    f"(uploaded: {len(df):,} · filtered: {len(st.session_state.filtered_df):,})."
+                )
+
             if not st.session_state.col_idade or not st.session_state.col_dados:
                 st.info("⚠️ Select the **'Age Column'** and **'Data Column'** in Global Settings to enable visual analysis and stratification.")
             else:
@@ -1146,7 +1203,7 @@ def main():
                 st.markdown("#### 📈 Visual & Analytical Settings")
                 
                 # --- CÁLCULO SEGURO DOS LIMITES DE IDADE ---
-                age_series = pd.to_numeric(df[st.session_state.col_idade], errors='coerce').dropna()
+                age_series = pd.to_numeric(source_df[st.session_state.col_idade], errors='coerce').dropna()
                 if not age_series.empty:
                     min_age_data = int(age_series.min())
                     max_age_data = int(age_series.max())
@@ -1190,7 +1247,7 @@ def main():
 
                         # 1. PRÉ-CALCULAR O GRÁFICO
                         age_range_safe = p.get('age_filter_range', (min_age_data, max_age_data))
-                        fig = plot_dispersion_chart(df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], age_range_safe)
+                        fig = plot_dispersion_chart(source_df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], age_range_safe)
 
                         # --- NOVA PARTE: CONVERTER PARA IMAGEM FIXA ---
                         img_buffer = None
@@ -1210,7 +1267,7 @@ def main():
                             sex_options_hboyd = [v for v in sex_column_values if v]
                             for sex_val in sex_options_hboyd:
                                 if sex_val not in p['selected_sexes_for_plot']: continue
-                                sub_df = df[df[st.session_state.col_sexo].astype(str) == str(sex_val)].copy()
+                                sub_df = source_df[source_df[st.session_state.col_sexo].astype(str) == str(sex_val)].copy()
                                 if sub_df.empty: continue
 
                                 df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(sub_df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], str(sex_val))
@@ -1233,9 +1290,9 @@ def main():
                                 if not df_ideais.empty:
                                     df_i = df_ideais.copy(); df_i.insert(0, 'Sex', str(sex_val)); df_ideais_global_list.append(df_i)
                         else:
-                            df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], "All")
+                            df_possiveis, df_ideais, cuts_ideais, h_activated = run_harris_boyd(source_df, st.session_state.col_idade, st.session_state.col_dados, p['ref_limits_list'], "All")
                             if h_activated: any_haeckel_activated_at_all = True
-                            max_age_full = int(pd.to_numeric(df[st.session_state.col_idade], errors='coerce').max())
+                            max_age_full = int(pd.to_numeric(source_df[st.session_state.col_idade], errors='coerce').max())
                             titulo_metodo_2 = "EDA Haeckel (Practical approach)" if h_activated else "Empirical Analysis of Dispersion and Means (Empirical approach)"
 
                             hboyd_render_data.append({
@@ -1244,7 +1301,7 @@ def main():
                                 'cuts_ideais': cuts_ideais,
                                 'max_age': max_age_full,
                                 'titulo_metodo_2': titulo_metodo_2,
-                                'sub_df': df
+                                'sub_df': source_df
                             })
 
                             if not df_possiveis.empty: df_possiveis_global_list.append(df_possiveis)
@@ -1407,7 +1464,7 @@ def main():
                             processor = get_data_processor()
                             age_rules = [r for r in st.session_state.stratum_rules if r.get('val1')]
                             sex_rules = [{'value': gender_val, 'name': str(gender_val)} for gender_val, is_selected in st.session_state.get('strat_gender_selection', {}).items() if is_selected]
-                            st.session_state.stratified_results = processor.apply_stratification(df.copy(), {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
+                            st.session_state.stratified_results = processor.apply_stratification(source_df.copy(), {'ages': age_rules, 'sexes': sex_rules}, {"coluna_idade": st.session_state.col_idade, "coluna_sexo": st.session_state.col_sexo}, progress_bar)
                         st.session_state.confirm_stratify = False
                         st.rerun()
                     if c2.button("Cancel"):
@@ -1415,9 +1472,54 @@ def main():
 
                 if st.session_state.get('stratified_results'):
                     is_excel = "Excel" in st.session_state.output_format
-                    for filename, df_to_download in st.session_state.stratified_results.items():
-                        file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
-                        st.download_button(f"📄 Download {filename}", data=file_bytes, file_name=f"{filename}.{'xlsx' if is_excel else 'csv'}", key=f"dl_{filename}", type="secondary")
+                    ext = 'xlsx' if is_excel else 'csv'
+                    results = st.session_state.stratified_results
+
+                    MIN_REF_N = 120  # CLSI EP28 minimum sample size per reference partition
+                    small_strata = [name for name, d in results.items() if len(d) < MIN_REF_N]
+
+                    st.markdown(
+                        f"<p style='font-weight:bold; color:{COLOR_PRIMARY}; margin-top:10px;'>"
+                        f"{len(results)} strata generated.</p>",
+                        unsafe_allow_html=True,
+                    )
+                    if small_strata:
+                        st.warning(
+                            f"⚠️ {len(small_strata)} of {len(results)} strata have fewer than "
+                            f"{MIN_REF_N} samples (CLSI EP28 minimum for reference intervals): "
+                            + ", ".join(small_strata)
+                        )
+
+                    # --- Single ZIP with every stratum (avoids many separate clicks) ---
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                        for filename, df_to_download in results.items():
+                            file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
+                            zf.writestr(f"{filename}.{ext}", file_bytes)
+                    zip_ts = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d_%H%M%S")
+                    st.download_button(
+                        f"⬇️ Download all {len(results)} strata (.zip)",
+                        data=zip_buffer.getvalue(),
+                        file_name=f"Stratified_Sheets_{zip_ts}.zip",
+                        mime="application/zip",
+                        use_container_width=True,
+                        type="primary",
+                        key="dl_all_strata_zip",
+                    )
+
+                    # --- Individual downloads, each showing its sample size (N) ---
+                    with st.expander("Download individual strata", expanded=False):
+                        for filename, df_to_download in results.items():
+                            n = len(df_to_download)
+                            flag = "  ⚠️ N<120" if n < MIN_REF_N else ""
+                            file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
+                            st.download_button(
+                                f"📄 {filename}  ·  n={n:,}{flag}",
+                                data=file_bytes,
+                                file_name=f"{filename}.{ext}",
+                                key=f"dl_{filename}",
+                                type="secondary",
+                            )
         else:
             st.info("⚠️ Please upload a spreadsheet to access the analysis and stratification tools.")
         st.markdown('</div></div>', unsafe_allow_html=True)
