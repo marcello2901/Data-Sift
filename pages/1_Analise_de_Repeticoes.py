@@ -11,8 +11,11 @@ primeira (R1).
 Blocos de análise:
   1) Estatística analítica das duplicatas: média, DP (desvio-padrão de
      repetibilidade), CV%, erro aleatório (DP x 1,96) e erro total analítico.
-  2) Análise por RCV (Reference Change Value / Valor de Referência para
-     Mudança), usando um banco de CVi (variação biológica intraindividual).
+  2) Mudança de interpretação entre R1 e R2 com base em intervalo de referência
+     e/ou limites de decisão médica (faixas definidas pelo usuário).
+
+Cada amostra é identificada pelo código de barras, para rastrear qual paciente
+ficou suspeito.
 
 Este arquivo é uma PÁGINA do app DataSift (pasta ``pages/``), mas também roda
 de forma independente com ``streamlit run pages/1_Analise_de_Repeticoes.py``.
@@ -23,7 +26,6 @@ import os
 import re
 import zipfile
 import tempfile
-import shutil
 
 import numpy as np
 import pandas as pd
@@ -56,8 +58,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Caminho da pasta do app (para localizar o cvi_database.csv na raiz do projeto)
-APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # --------------------------------------------------------------------------- #
 # 1. Normalização numérica (decimais com "," ou ".", milhar, unidades, etc.)
@@ -149,67 +149,30 @@ def carregar_planilha(conteudo: bytes, nome: str) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
-# 3. Banco de CVi (variação biológica intraindividual)
+# 3. Cálculos estatísticos das duplicatas
 # --------------------------------------------------------------------------- #
-# Fallback embutido caso o arquivo cvi_database.csv não seja enviado.
-CVI_PADRAO = {
-    "Glicose": 5.6, "Ureia": 12.3, "Creatinina": 5.9, "Acido urico": 8.6,
-    "Colesterol total": 5.9, "HDL colesterol": 7.4, "LDL colesterol": 8.3,
-    "Triglicerides": 20.9, "Sodio": 0.6, "Potassio": 4.6, "Cloreto": 1.2,
-    "Calcio": 1.9, "Fosforo": 8.5, "Magnesio": 3.6, "Proteinas totais": 2.7,
-    "Albumina": 3.1, "Bilirrubina total": 21.8, "ALT (TGP)": 18.0,
-    "AST (TGO)": 12.3, "GGT": 13.8, "Fosfatase alcalina": 6.5, "TSH": 19.3,
-    "T4 livre": 5.7, "HbA1c": 1.6, "Hemoglobina": 2.8, "Leucocitos": 10.9,
-    "Plaquetas": 9.1, "PSA total": 18.1, "Ferritina": 14.9, "PCR": 42.2,
-}
-
-
-@st.cache_data(show_spinner=False)
-def carregar_cvi_db(conteudo_custom: bytes | None = None) -> pd.DataFrame:
+def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
+                      col_id: str | None = None, z: float = 1.96):
     """
-    Devolve o banco de CVi como DataFrame (colunas: Analito, CVi_percent, ...).
-    Prioridade: arquivo enviado pelo usuário > cvi_database.csv na raiz >
-    dicionário embutido CVI_PADRAO.
-    """
-    df = None
-    if conteudo_custom is not None:
-        try:
-            df = _ler_csv(io.BytesIO(conteudo_custom))
-        except Exception:
-            df = None
-    if df is None:
-        caminho = os.path.join(APP_DIR, "cvi_database.csv")
-        if os.path.exists(caminho):
-            try:
-                df = _ler_csv(caminho)
-            except Exception:
-                df = None
-    if df is None:
-        df = pd.DataFrame({"Analito": list(CVI_PADRAO.keys()),
-                           "CVi_percent": list(CVI_PADRAO.values())})
-    # normaliza nomes de coluna esperados
-    df.columns = [str(c).strip() for c in df.columns]
-    if "CVi_percent" in df.columns:
-        df["CVi_percent"] = normalizar_serie_numerica(df["CVi_percent"])
-    return df
-
-
-# --------------------------------------------------------------------------- #
-# 4. Cálculos estatísticos das duplicatas
-# --------------------------------------------------------------------------- #
-def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str, z: float = 1.96):
-    """
-    Recebe o DataFrame já com as colunas R1/R2 e devolve:
-      - tabela por par (R1, R2, média, diferença, erro relativo %, RPD %)
+    Recebe o DataFrame e devolve:
+      - tabela por par (ID, R1, R2, média, diferença, erro relativo %, RPD %)
       - dicionário com as métricas agregadas.
+    A coluna ``ID`` guarda o código de barras (ou o nº da linha, se não informado).
     """
+    n = len(df)
+    if col_id and col_id in df.columns:
+        ids = df[col_id].astype(str).values
+    else:
+        ids = np.array([f"linha {i + 1}" for i in range(n)])
+
     base = pd.DataFrame({
-        "R1": normalizar_serie_numerica(df[col_r1]),
-        "R2": normalizar_serie_numerica(df[col_r2]),
+        "ID": ids,
+        "R1": normalizar_serie_numerica(df[col_r1]).values,
+        "R2": normalizar_serie_numerica(df[col_r2]).values,
     })
     n_total = len(base)
     base = base.dropna(subset=["R1", "R2"])
-    base = base[(base["R1"] != 0)]  # evita divisão por zero em (R1-R2)/R1
+    base = base[base["R1"] != 0].reset_index(drop=True)  # evita divisão por zero em (R1-R2)/R1
     n_validos = len(base)
 
     base["Media_par"] = (base["R1"] + base["R2"]) / 2.0
@@ -254,9 +217,36 @@ def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str, z: float = 1.9
     return base, resumo
 
 
-def calcular_rcv(cva: float, cvi: float, z: float = 1.96) -> float:
-    """RCV = sqrt(2) * Z * sqrt(CVa^2 + CVi^2)  (modelo clássico de Fraser/Harris)."""
-    return float(np.sqrt(2) * z * np.sqrt(cva ** 2 + cvi ** 2))
+# --------------------------------------------------------------------------- #
+# 4. Classificação por faixas (intervalo de referência / decisão médica)
+# --------------------------------------------------------------------------- #
+def preparar_faixas(faixas_df: pd.DataFrame):
+    """
+    Converte a tabela editada pelo usuário (Interpretação, De, Até) numa lista de
+    faixas (rótulo, limite_inferior, limite_superior). Limite vazio vira ±infinito.
+    Linhas sem rótulo são ignoradas.
+    """
+    faixas = []
+    for _, r in faixas_df.iterrows():
+        rotulo = str(r.get("Interpretação", "")).strip()
+        if rotulo == "" or rotulo.lower() == "nan":
+            continue
+        lo = r.get("De (>=)")
+        hi = r.get("Até (<)")
+        lo = -np.inf if pd.isna(lo) else float(lo)
+        hi = np.inf if pd.isna(hi) else float(hi)
+        faixas.append((rotulo, lo, hi))
+    return faixas
+
+
+def classificar_valor(valor, faixas):
+    """Devolve o rótulo da primeira faixa em que lo <= valor < hi."""
+    if pd.isna(valor):
+        return "—"
+    for rotulo, lo, hi in faixas:
+        if lo <= valor < hi:
+            return rotulo
+    return "Fora das faixas"
 
 
 # --------------------------------------------------------------------------- #
@@ -275,23 +265,24 @@ def to_excel(df: pd.DataFrame) -> bytes:
 st.markdown("## 🔁 Análise de Repetições (Duplicatas) — Controle da Qualidade Analítica")
 st.caption(
     "Avalia a concordância entre um primeiro resultado (R1) e sua repetição (R2) "
-    "para detectar problemas de equipamento/reagente. Complementa a análise de "
-    "média/mediana móvel já existente no DataSift."
+    "para detectar problemas de equipamento/reagente, e verifica se a interpretação "
+    "clínica mudou entre as duas medições. Complementa a análise de média/mediana "
+    "móvel já existente no DataSift."
 )
 
 # ---- Upload da planilha --------------------------------------------------- #
 with st.container(border=True):
     st.markdown("### 1 · Envie a planilha de resultados")
     arquivo = st.file_uploader(
-        "Arquivo com as colunas R1 e R2 (uma linha por amostra)",
+        "Arquivo com as colunas R1, R2 e o código de barras (uma linha por amostra)",
         type=["csv", "xlsx", "xls", "zip"],
     )
 
 if arquivo is None:
     st.info(
-        "📄 Envie um arquivo para começar. Ele deve conter, no mínimo, duas colunas: "
-        "o primeiro resultado (R1) e a repetição (R2). Colunas de analito, data ou "
-        "identificação do paciente são opcionais."
+        "📄 Envie um arquivo para começar. Ele deve conter, no mínimo, três colunas: "
+        "o primeiro resultado (R1), a repetição (R2) e o código de barras que identifica "
+        "a amostra. Coluna de analito é opcional."
     )
     st.stop()
 
@@ -308,18 +299,22 @@ with st.expander("👁️ Ver amostra dos dados (10 primeiras linhas)"):
 with st.container(border=True):
     st.markdown("### 2 · Indique as colunas")
     colunas = list(df.columns)
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         col_r1 = st.selectbox("Coluna do **R1** (1º resultado)", colunas, index=0)
     with c2:
         idx2 = 1 if len(colunas) > 1 else 0
         col_r2 = st.selectbox("Coluna do **R2** (repetição)", colunas, index=idx2)
-
-    c3, c4 = st.columns(2)
     with c3:
-        opc = ["(nenhuma)"] + colunas
-        col_analito = st.selectbox("Coluna de analito/exame (opcional)", opc, index=0)
+        col_id = st.selectbox("Coluna do **código de barras** (identificador)",
+                              ["(usar nº da linha)"] + colunas, index=0)
+    col_id = None if col_id == "(usar nº da linha)" else col_id
+
+    c4, c5 = st.columns(2)
     with c4:
+        col_analito = st.selectbox("Coluna de analito/exame (opcional)",
+                                   ["(nenhuma)"] + colunas, index=0)
+    with c5:
         z_opt = st.selectbox("Nível de confiança (Z)",
                              ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
     z = 1.96 if "1,96" in z_opt else 1.65
@@ -337,7 +332,7 @@ if col_analito != "(nenhuma)":
         df_uso = df[df[col_analito].astype(str) == escolha]
 
 # ---- Cálculo -------------------------------------------------------------- #
-base, resumo = calcular_metricas(df_uso, col_r1, col_r2, z=z)
+base, resumo = calcular_metricas(df_uso, col_r1, col_r2, col_id=col_id, z=z)
 
 if resumo["n_validos"] == 0:
     st.error(
@@ -353,7 +348,7 @@ if descartados > 0:
         f"R1 ou R2, ou por R1 = 0 (indefinido em (R1−R2)/R1)."
     )
 
-# ---- Bloco de resultados: estatística analítica --------------------------- #
+# ---- Bloco 3: estatística analítica --------------------------------------- #
 st.markdown("### 3 · Estatística analítica das duplicatas")
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Nº de pares válidos", f"{resumo['n_validos']}")
@@ -376,7 +371,7 @@ with st.expander("ℹ️ Como cada número é calculado"):
   diferenças das duplicatas: `Sr = √( Σ(R1−R2)² / (2·n) )`. É a forma correta de
   estimar a imprecisão em duplicatas — o DP simples de todos os valores mede a
   variação **entre pacientes**, não a do método.
-- **CV analítico (%)** = `Sr / Média × 100`. Este é o **CVa** usado no RCV abaixo.
+- **CV analítico (%)** = `Sr / Média × 100`. Mede a imprecisão relativa do método.
 - **Erro aleatório** = `DP × {z}` — limite do erro aleatório para o Z escolhido
   (Z = 1,96 ≈ 95% bilateral; Z = 1,65 ≈ 95% unilateral).
 - **Viés médio** = média de (R1−R2); indica erro **sistemático** entre a 1ª e a 2ª medição.
@@ -393,25 +388,34 @@ lim_eta = st.number_input(
     help="Defina conforme o erro total admissível do seu analito (ex.: especificação "
          "por variação biológica, CLIA, RDC). Pares acima disto ficam marcados.",
 )
-base["Suspeito"] = base["ETA_abs_%"] > lim_eta
-n_susp = int(base["Suspeito"].sum())
+base["Suspeito_erro"] = base["ETA_abs_%"] > lim_eta
+n_susp = int(base["Suspeito_erro"].sum())
 if n_susp:
     st.error(f"⚠️ {n_susp} par(es) ({n_susp/resumo['n_validos']*100:.1f}%) acima do limite de {lim_eta:.1f}%.")
 else:
     st.success(f"Nenhum par acima do limite de {lim_eta:.1f}%.")
 
-# Tabela por par
+# Tabela por par (com código de barras)
 tabela = base.rename(columns={
-    "Media_par": "Média", "Diferenca": "R1−R2", "Dif_abs": "|R1−R2|",
-    "DP_par": "DP par", "CV_par_%": "CV par %", "ETA_%": "(R1−R2)/R1 %",
+    "ID": "Código de barras", "Media_par": "Média", "Diferenca": "R1−R2",
+    "Dif_abs": "|R1−R2|", "CV_par_%": "CV par %", "ETA_%": "(R1−R2)/R1 %",
     "ETA_abs_%": "|(R1−R2)/R1| %", "RPD_%": "RPD % (simétrico)",
+    "Suspeito_erro": "Suspeito",
 })
 st.dataframe(
-    tabela[["R1", "R2", "Média", "R1−R2", "|R1−R2|", "CV par %",
+    tabela[["Código de barras", "R1", "R2", "Média", "R1−R2", "|R1−R2|", "CV par %",
             "(R1−R2)/R1 %", "|(R1−R2)/R1| %", "RPD % (simétrico)", "Suspeito"]]
     .style.format(precision=3),
     use_container_width=True, height=320,
 )
+if n_susp:
+    with st.expander(f"🔎 Ver só os {n_susp} suspeito(s) pelo erro total"):
+        st.dataframe(
+            tabela.loc[tabela["Suspeito"], ["Código de barras", "R1", "R2",
+                                            "(R1−R2)/R1 %", "|(R1−R2)/R1| %"]]
+            .style.format(precision=3),
+            use_container_width=True,
+        )
 
 # ---- Gráficos ------------------------------------------------------------- #
 st.markdown("#### Gráficos de apoio")
@@ -424,8 +428,9 @@ with g1:
     md = resumo["vies_medio"]
     sd = base["Diferenca"].std(ddof=1)
     ax.axhline(md, color=COLOR_PRIMARY, lw=1.5, label=f"Viés = {md:.3f}")
-    ax.axhline(md + 1.96 * sd, color="#EF476F", ls="--", lw=1, label="±1,96 DP")
-    ax.axhline(md - 1.96 * sd, color="#EF476F", ls="--", lw=1)
+    if pd.notna(sd):
+        ax.axhline(md + 1.96 * sd, color="#EF476F", ls="--", lw=1, label="±1,96 DP")
+        ax.axhline(md - 1.96 * sd, color="#EF476F", ls="--", lw=1)
     ax.set_xlabel("Média do par (R1+R2)/2")
     ax.set_ylabel("Diferença (R1−R2)")
     ax.set_title("Bland-Altman")
@@ -450,72 +455,114 @@ with g2:
     ax2.grid(alpha=0.2)
     st.pyplot(fig2, clear_figure=True)
 
-# ---- Bloco de RCV --------------------------------------------------------- #
-st.markdown("### 4 · Análise por RCV (Valor de Referência para Mudança)")
-st.caption(
-    "O RCV avalia se a diferença entre dois resultados **do mesmo paciente** é maior "
-    "do que a variação esperada (analítica + biológica). Fórmula clássica: "
-    "RCV = √2 · Z · √(CVa² + CVi²)."
-)
+with st.expander("ℹ️ Como interpretar os gráficos"):
+    st.markdown(
+        """
+**Gráfico de Bland-Altman** — mostra, para cada amostra, a **média do par**
+`(R1+R2)/2` no eixo X e a **diferença** `R1−R2` no eixo Y. Serve para enxergar a
+concordância entre a 1ª e a 2ª medição ao longo de toda a faixa de concentração.
 
-cvi_up = st.file_uploader("Banco de CVi personalizado (opcional, CSV: Analito;CVi_percent)",
-                          type=["csv"], key="cvi_uploader")
-cvi_df = carregar_cvi_db(cvi_up.getvalue() if cvi_up is not None else None)
+- A **linha cheia central** é o **viés médio**. Se ela está bem afastada do zero,
+  há um **erro sistemático** entre R1 e R2 (o sistema tende a ler mais alto ou mais
+  baixo na repetição).
+- As **linhas tracejadas** são os **limites de concordância** (viés ± 1,96·DP);
+  espera-se que ~95% dos pontos fiquem dentro delas. Pontos **fora** são as amostras
+  mais discrepantes — candidatas a suspeitas (confira o código de barras na tabela).
+- Se a nuvem de pontos **abre como um funil** ou **inclina** conforme a concentração
+  aumenta, o erro é **proporcional à concentração** (típico de problema de calibração
+  ou linearidade), e não um erro constante.
+- Idealmente os pontos ficam espalhados **simetricamente em torno do zero**, sem
+  padrão.
 
-rc1, rc2, rc3 = st.columns(3)
-with rc1:
-    fonte_cva = st.radio("CVa (imprecisão analítica)",
-                         ["Usar CV calculado acima", "Informar manualmente"], index=0)
-    if fonte_cva == "Usar CV calculado acima":
-        cva = float(resumo["cv_analitico"])
-        st.metric("CVa (%)", f"{cva:.2f}")
-    else:
-        cva = st.number_input("CVa (%)", min_value=0.0, value=float(round(resumo["cv_analitico"], 2)), step=0.1)
-with rc2:
-    analitos = cvi_df["Analito"].astype(str).tolist() if "Analito" in cvi_df.columns else []
-    sel = st.selectbox("Analito (para buscar o CVi no banco)", ["(informar manualmente)"] + analitos)
-    if sel != "(informar manualmente)" and "CVi_percent" in cvi_df.columns:
-        cvi_lookup = cvi_df.loc[cvi_df["Analito"].astype(str) == sel, "CVi_percent"]
-        cvi_default = float(cvi_lookup.iloc[0]) if len(cvi_lookup) else 5.0
-    else:
-        cvi_default = 5.0
-    cvi = st.number_input("CVi (%)", min_value=0.0, value=float(cvi_default), step=0.1)
-with rc3:
-    z_rcv = 1.96 if "1,96" in z_opt else 1.65
-    st.metric("Z aplicado", f"{z_rcv}")
-    rcv = calcular_rcv(cva, cvi, z_rcv)
-    st.metric("RCV (%)", f"{rcv:.1f}")
+**Média móvel da diferença** — mostra a diferença `R1−R2` de cada amostra na
+**ordem em que foram analisadas** (eixo X), com uma **média móvel** (linha destacada)
+que suaviza o ruído e revela **tendências ao longo do tempo/corrida**.
 
-st.latex(r"RCV = \sqrt{2}\times %.2f \times \sqrt{%.2f^2 + %.2f^2} = %.1f\%%"
-         % (z_rcv, cva, cvi, rcv))
-
-# Avalia cada par: a variação relativa entre R1 e R2 excede o RCV?
-base["Variacao_%"] = base["Diferenca"] / base["R1"] * 100
-base["Excede_RCV"] = base["Variacao_%"].abs() > rcv
-n_rcv = int(base["Excede_RCV"].sum())
-st.write(
-    f"**{n_rcv}** de **{resumo['n_validos']}** pares "
-    f"({n_rcv/resumo['n_validos']*100:.1f}%) apresentam variação R1→R2 maior que o RCV "
-    f"de {rcv:.1f}% — ou seja, uma mudança estatisticamente significativa."
-)
-st.info(
-    "Atenção conceitual: o RCV foi concebido para **amostras seriadas do mesmo paciente** "
-    "(coletas em tempos diferentes), onde entra a variação biológica (CVi). Se R1 e R2 são "
-    "reanálises da **mesma amostra**, o esperado é não haver variação biológica — nesse caso "
-    "use os indicadores analíticos do bloco 3 (DP, CV, erro total). Use o RCV quando R1/R2 "
-    "forem resultados do paciente em momentos distintos."
-)
-with st.expander("👁️ Ver pares que excedem o RCV"):
-    st.dataframe(
-        base.loc[base["Excede_RCV"], ["R1", "R2", "Variacao_%"]]
-        .rename(columns={"Variacao_%": "Variação R1→R2 %"})
-        .style.format(precision=3),
-        use_container_width=True,
+- A média móvel deve **oscilar em torno do zero**. Uma **subida ou descida
+  sustentada** indica uma **deriva** do sistema (reagente envelhecendo, calibração
+  saindo do lugar, degradação do equipamento) — mesmo que cada par individual pareça
+  aceitável.
+- Um **degrau/salto abrupto** costuma marcar um **evento**: troca de lote de reagente,
+  recalibração, manutenção. Cruzar a posição do salto com o log do equipamento ajuda
+  a achar a causa.
+- Use a **janela** para ajustar a sensibilidade: janela pequena reage rápido a
+  mudanças (mais ruído); janela grande evidencia tendências longas (mais suave).
+"""
     )
 
-# ---- Downloads ------------------------------------------------------------ #
+# ---- Bloco 4: mudança de interpretação ------------------------------------ #
+st.markdown("### 4 · Mudança de interpretação entre R1 e R2")
+st.caption(
+    "Classifique R1 e R2 em faixas (intervalo de referência e/ou limites de decisão "
+    "médica) e veja em quais amostras a **interpretação mudou** da 1ª para a 2ª medição "
+    "— essas são as mais críticas, pois trocariam a conduta clínica."
+)
+
+usar_interp = st.checkbox("Ativar análise de mudança de interpretação", value=True)
+
+if usar_interp:
+    st.markdown(
+        "Defina as faixas abaixo. **Adicione quantas linhas quiser** (botão ➕ na tabela). "
+        "Deixe *De* vazio para “menos infinito” e *Até* vazio para “mais infinito”. "
+        "O limite inferior é **incluído** e o superior é **excluído** (`De ≤ valor < Até`)."
+    )
+    faixas_default = pd.DataFrame({
+        "Interpretação": ["Baixo", "Normal", "Alto"],
+        "De (>=)": [np.nan, 70.0, 100.0],
+        "Até (<)": [70.0, 100.0, np.nan],
+    })
+    faixas_edit = st.data_editor(
+        faixas_default,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="faixas_editor",
+        column_config={
+            "Interpretação": st.column_config.TextColumn(
+                "Interpretação", help="Ex.: Normal, Alto, Diabetes, Crítico..."),
+            "De (>=)": st.column_config.NumberColumn(
+                "De (≥)", help="Limite inferior da faixa (incluído). Vazio = −∞.", format="%.4f"),
+            "Até (<)": st.column_config.NumberColumn(
+                "Até (<)", help="Limite superior da faixa (excluído). Vazio = +∞.", format="%.4f"),
+        },
+    )
+
+    faixas = preparar_faixas(faixas_edit)
+    if len(faixas) == 0:
+        st.warning("Defina ao menos uma faixa com rótulo para rodar a análise de interpretação.")
+    else:
+        base["Interp_R1"] = base["R1"].apply(lambda v: classificar_valor(v, faixas))
+        base["Interp_R2"] = base["R2"].apply(lambda v: classificar_valor(v, faixas))
+        base["Mudou_interp"] = base["Interp_R1"] != base["Interp_R2"]
+        n_mudou = int(base["Mudou_interp"].sum())
+
+        cA, cB = st.columns(2)
+        cA.metric("Amostras com mudança de interpretação", f"{n_mudou}")
+        cB.metric("% do total", f"{n_mudou/resumo['n_validos']*100:.1f} %")
+
+        if n_mudou:
+            st.error(
+                f"⚠️ {n_mudou} amostra(s) mudaram de interpretação entre R1 e R2. "
+                "Confira os códigos de barras abaixo — são os pacientes suspeitos."
+            )
+            tab_mud = base.loc[base["Mudou_interp"],
+                               ["ID", "R1", "R2", "Interp_R1", "Interp_R2"]].rename(
+                columns={"ID": "Código de barras", "Interp_R1": "Interpretação R1",
+                         "Interp_R2": "Interpretação R2"})
+            st.dataframe(tab_mud.style.format(precision=3), use_container_width=True)
+        else:
+            st.success("Nenhuma amostra mudou de interpretação entre R1 e R2.")
+
+        with st.expander("🔀 Matriz de transição (R1 → R2)"):
+            st.caption("Quantas amostras foram de cada interpretação em R1 (linhas) "
+                       "para cada interpretação em R2 (colunas). A diagonal são as que "
+                       "não mudaram.")
+            matriz = pd.crosstab(base["Interp_R1"], base["Interp_R2"],
+                                 rownames=["R1"], colnames=["R2"])
+            st.dataframe(matriz, use_container_width=True)
+
+# ---- Bloco 5: exportar ---------------------------------------------------- #
 st.markdown("### 5 · Exportar resultados")
-export = base.copy()
+export = base.rename(columns={"ID": "Codigo_de_barras"}).copy()
 d1, d2 = st.columns(2)
 with d1:
     st.download_button("⬇️ Baixar tabela (Excel)", data=to_excel(export),
