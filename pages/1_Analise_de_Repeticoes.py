@@ -11,11 +11,12 @@ primeira (R1).
 Blocos de análise:
   1) Estatística analítica das duplicatas: média, DP (desvio-padrão de
      repetibilidade), CV%, erro aleatório (DP x 1,96) e erro total analítico.
-  2) Mudança de interpretação entre R1 e R2 com base em intervalo de referência
-     e/ou limites de decisão médica (faixas definidas pelo usuário).
+  2) Mudança de interpretação entre R1 e R2 com base em um intervalo de
+     referência / limite de decisão médica definido pelo usuário.
 
 Cada amostra é identificada pelo código de barras, para rastrear qual paciente
-ficou suspeito.
+ficou suspeito. A média móvel das diferenças pode ser ordenada pela data/hora
+do resultado.
 
 Este arquivo é uma PÁGINA do app DataSift (pasta ``pages/``), mas também roda
 de forma independente com ``streamlit run pages/1_Analise_de_Repeticoes.py``.
@@ -105,6 +106,14 @@ def normalizar_serie_numerica(serie: pd.Series) -> pd.Series:
     return serie.apply(_conv)
 
 
+def parse_limite(txt: str):
+    """Converte um limite digitado (aceita vírgula) para float; vazio -> None."""
+    if txt is None:
+        return None
+    v = normalizar_serie_numerica(pd.Series([txt])).iloc[0]
+    return None if pd.isna(v) else float(v)
+
+
 # --------------------------------------------------------------------------- #
 # 2. Leitura robusta da planilha (csv / xlsx / xls / zip)
 # --------------------------------------------------------------------------- #
@@ -148,14 +157,26 @@ def carregar_planilha(conteudo: bytes, nome: str) -> pd.DataFrame:
     return df
 
 
+def montar_datahora(df: pd.DataFrame, col_data: str | None, col_hora: str | None):
+    """Combina as colunas de data e hora num datetime (dd/mm/aaaa, dayfirst)."""
+    if not col_data or col_data not in df.columns:
+        return None
+    d = df[col_data].astype(str).str.strip()
+    if col_hora and col_hora in df.columns:
+        combo = d + " " + df[col_hora].astype(str).str.strip()
+    else:
+        combo = d
+    return pd.to_datetime(combo, errors="coerce", dayfirst=True)
+
+
 # --------------------------------------------------------------------------- #
 # 3. Cálculos estatísticos das duplicatas
 # --------------------------------------------------------------------------- #
 def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
-                      col_id: str | None = None, z: float = 1.96):
+                      col_id: str | None = None, datahora=None, z: float = 1.96):
     """
     Recebe o DataFrame e devolve:
-      - tabela por par (ID, R1, R2, média, diferença, erro relativo %, RPD %)
+      - tabela por par (ID, R1, R2, média, diferença, erro relativo %, RPD %, DataHora)
       - dicionário com as métricas agregadas.
     A coluna ``ID`` guarda o código de barras (ou o nº da linha, se não informado).
     """
@@ -165,11 +186,15 @@ def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
     else:
         ids = np.array([f"linha {i + 1}" for i in range(n)])
 
-    base = pd.DataFrame({
+    dados = {
         "ID": ids,
         "R1": normalizar_serie_numerica(df[col_r1]).values,
         "R2": normalizar_serie_numerica(df[col_r2]).values,
-    })
+    }
+    if datahora is not None:
+        dados["DataHora"] = pd.to_datetime(datahora).values
+    base = pd.DataFrame(dados)
+
     n_total = len(base)
     base = base.dropna(subset=["R1", "R2"])
     base = base[base["R1"] != 0].reset_index(drop=True)  # evita divisão por zero em (R1-R2)/R1
@@ -218,35 +243,21 @@ def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
 
 
 # --------------------------------------------------------------------------- #
-# 4. Classificação por faixas (intervalo de referência / decisão médica)
+# 4. Classificação por intervalo de referência / limite de decisão médica
 # --------------------------------------------------------------------------- #
-def preparar_faixas(faixas_df: pd.DataFrame):
+def classificar_ref(valor, limite_inf, limite_sup):
     """
-    Converte a tabela editada pelo usuário (Interpretação, De, Até) numa lista de
-    faixas (rótulo, limite_inferior, limite_superior). Limite vazio vira ±infinito.
-    Linhas sem rótulo são ignoradas.
+    Classifica um valor em Baixo / Normal / Alto a partir do intervalo de
+    referência. Limites são inclusivos (Normal = inf <= valor <= sup). Qualquer
+    limite pode ficar em branco (None) para representar "sem limite" daquele lado.
     """
-    faixas = []
-    for _, r in faixas_df.iterrows():
-        rotulo = str(r.get("Interpretação", "")).strip()
-        if rotulo == "" or rotulo.lower() == "nan":
-            continue
-        lo = r.get("De (>=)")
-        hi = r.get("Até (<)")
-        lo = -np.inf if pd.isna(lo) else float(lo)
-        hi = np.inf if pd.isna(hi) else float(hi)
-        faixas.append((rotulo, lo, hi))
-    return faixas
-
-
-def classificar_valor(valor, faixas):
-    """Devolve o rótulo da primeira faixa em que lo <= valor < hi."""
     if pd.isna(valor):
         return "—"
-    for rotulo, lo, hi in faixas:
-        if lo <= valor < hi:
-            return rotulo
-    return "Fora das faixas"
+    if limite_inf is not None and valor < limite_inf:
+        return "Baixo"
+    if limite_sup is not None and valor > limite_sup:
+        return "Alto"
+    return "Normal"
 
 
 # --------------------------------------------------------------------------- #
@@ -282,7 +293,7 @@ if arquivo is None:
     st.info(
         "📄 Envie um arquivo para começar. Ele deve conter, no mínimo, três colunas: "
         "o primeiro resultado (R1), a repetição (R2) e o código de barras que identifica "
-        "a amostra. Coluna de analito é opcional."
+        "a amostra. Colunas de analito, data e hora são opcionais."
     )
     st.stop()
 
@@ -292,13 +303,13 @@ if df is None or df.empty:
     st.stop()
 
 st.success(f"Planilha carregada: {len(df)} linhas × {len(df.columns)} colunas.")
-with st.expander("👁️ Ver amostra dos dados (10 primeiras linhas)"):
-    st.dataframe(df.head(10), use_container_width=True)
 
 # ---- Mapeamento de colunas ------------------------------------------------ #
 with st.container(border=True):
     st.markdown("### 2 · Indique as colunas")
     colunas = list(df.columns)
+    opc = ["(nenhuma)"] + colunas
+
     c1, c2, c3 = st.columns(3)
     with c1:
         col_r1 = st.selectbox("Coluna do **R1** (1º resultado)", colunas, index=0)
@@ -308,15 +319,20 @@ with st.container(border=True):
     with c3:
         col_id = st.selectbox("Coluna do **código de barras** (identificador)",
                               ["(usar nº da linha)"] + colunas, index=0)
-    col_id = None if col_id == "(usar nº da linha)" else col_id
+        col_id = None if col_id == "(usar nº da linha)" else col_id
 
-    c4, c5 = st.columns(2)
+    c4, c5, c6 = st.columns(3)
     with c4:
-        col_analito = st.selectbox("Coluna de analito/exame (opcional)",
-                                   ["(nenhuma)"] + colunas, index=0)
+        col_analito = st.selectbox("Coluna de analito/exame (opcional)", opc, index=0)
     with c5:
-        z_opt = st.selectbox("Nível de confiança (Z)",
-                             ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
+        col_data = st.selectbox("Coluna de **data** (opcional)", opc, index=0)
+        col_data = None if col_data == "(nenhuma)" else col_data
+    with c6:
+        col_hora = st.selectbox("Coluna de **hora** (opcional)", opc, index=0)
+        col_hora = None if col_hora == "(nenhuma)" else col_hora
+
+    z_opt = st.selectbox("Nível de confiança (Z)",
+                         ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
     z = 1.96 if "1,96" in z_opt else 1.65
 
 if col_r1 == col_r2:
@@ -332,7 +348,8 @@ if col_analito != "(nenhuma)":
         df_uso = df[df[col_analito].astype(str) == escolha]
 
 # ---- Cálculo -------------------------------------------------------------- #
-base, resumo = calcular_metricas(df_uso, col_r1, col_r2, col_id=col_id, z=z)
+datahora = montar_datahora(df_uso, col_data, col_hora)
+base, resumo = calcular_metricas(df_uso, col_r1, col_r2, col_id=col_id, datahora=datahora, z=z)
 
 if resumo["n_validos"] == 0:
     st.error(
@@ -419,14 +436,14 @@ if n_susp:
 
 # ---- Gráficos ------------------------------------------------------------- #
 st.markdown("#### Gráficos de apoio")
+md = resumo["vies_medio"]
+sd = base["Diferenca"].std(ddof=1)
 g1, g2 = st.columns(2)
 
 with g1:
     # Bland-Altman: média do par (x) vs diferença (y)
     fig, ax = plt.subplots(figsize=(5, 3.6))
     ax.scatter(base["Media_par"], base["Diferenca"], s=14, alpha=0.6, color=COLOR_TERTIARY)
-    md = resumo["vies_medio"]
-    sd = base["Diferenca"].std(ddof=1)
     ax.axhline(md, color=COLOR_PRIMARY, lw=1.5, label=f"Viés = {md:.3f}")
     if pd.notna(sd):
         ax.axhline(md + 1.96 * sd, color="#EF476F", ls="--", lw=1, label="±1,96 DP")
@@ -439,21 +456,47 @@ with g1:
     st.pyplot(fig, clear_figure=True)
 
 with g2:
-    # Média móvel da diferença na ordem de análise (detecta desvio ao longo do tempo)
+    # Média móvel da diferença — ordenada por data/hora se disponível, senão por ordem
     janela = st.slider("Janela da média móvel das diferenças", 3, 50, 10)
-    serie_dif = base["Diferenca"].reset_index(drop=True)
-    mm = serie_dif.rolling(janela, min_periods=1).mean()
+    tem_dt = "DataHora" in base.columns and base["DataHora"].notna().any()
+    if tem_dt:
+        ordf = base.dropna(subset=["DataHora"]).sort_values("DataHora").reset_index(drop=True)
+        x, xlabel = ordf["DataHora"], "Data/hora do resultado"
+        sem_dt = int(base["DataHora"].isna().sum())
+    else:
+        ordf = base.reset_index(drop=True)
+        x, xlabel, sem_dt = ordf.index, "Ordem da amostra", 0
+    y = ordf["Diferenca"]
+    mm = y.rolling(janela, min_periods=1).mean()
     fig2, ax2 = plt.subplots(figsize=(5, 3.6))
-    ax2.plot(serie_dif.index, serie_dif.values, ".", ms=4, alpha=0.35,
-             color="#999", label="Diferença")
-    ax2.plot(mm.index, mm.values, "-", lw=2, color=COLOR_SECONDARY, label=f"Média móvel ({janela})")
+    ax2.plot(x, y.values, ".", ms=4, alpha=0.35, color="#999", label="Diferença")
+    ax2.plot(x, mm.values, "-", lw=2, color=COLOR_SECONDARY, label=f"Média móvel ({janela})")
     ax2.axhline(0, color=COLOR_PRIMARY, lw=1)
-    ax2.set_xlabel("Ordem da amostra")
+    ax2.set_xlabel(xlabel)
     ax2.set_ylabel("Diferença (R1−R2)")
     ax2.set_title("Média móvel da diferença (deriva do sistema)")
     ax2.legend(fontsize=7)
     ax2.grid(alpha=0.2)
+    if tem_dt:
+        fig2.autofmt_xdate()
     st.pyplot(fig2, clear_figure=True)
+    if tem_dt and sem_dt:
+        st.caption(f"{sem_dt} amostra(s) sem data/hora válida não entraram neste gráfico.")
+    elif not tem_dt and (col_data or col_hora):
+        st.caption("Não foi possível interpretar a data/hora; gráfico ordenado pela ordem da amostra.")
+
+# Tabela dos pontos fora dos limites de concordância (±1,96 DP) do Bland-Altman
+if pd.notna(sd) and sd > 0:
+    lim_ba = 1.96 * sd
+    fora = base[(base["Diferenca"] - md).abs() > lim_ba]
+    st.markdown(f"**Amostras fora dos limites de concordância do Bland-Altman "
+                f"(viés {md:.3f} ± {lim_ba:.3f})**")
+    if len(fora):
+        tab_fora = fora.rename(columns={"ID": "Código de barras",
+                                        "Diferenca": "R1−R2"})[["Código de barras", "R1", "R2", "R1−R2"]]
+        st.dataframe(tab_fora.style.format(precision=3), use_container_width=True)
+    else:
+        st.success("Nenhuma amostra fora dos limites de ±1,96 DP.")
 
 with st.expander("ℹ️ Como interpretar os gráficos"):
     st.markdown(
@@ -466,25 +509,26 @@ concordância entre a 1ª e a 2ª medição ao longo de toda a faixa de concentr
   há um **erro sistemático** entre R1 e R2 (o sistema tende a ler mais alto ou mais
   baixo na repetição).
 - As **linhas tracejadas** são os **limites de concordância** (viés ± 1,96·DP);
-  espera-se que ~95% dos pontos fiquem dentro delas. Pontos **fora** são as amostras
-  mais discrepantes — candidatas a suspeitas (confira o código de barras na tabela).
+  espera-se que ~95% dos pontos fiquem dentro delas. Os pontos **fora** aparecem
+  listados na tabela logo acima, com o código de barras — são as amostras mais
+  discrepantes, candidatas a suspeitas.
 - Se a nuvem de pontos **abre como um funil** ou **inclina** conforme a concentração
   aumenta, o erro é **proporcional à concentração** (típico de problema de calibração
   ou linearidade), e não um erro constante.
-- Idealmente os pontos ficam espalhados **simetricamente em torno do zero**, sem
-  padrão.
+- Idealmente os pontos ficam espalhados **simetricamente em torno do zero**, sem padrão.
 
 **Média móvel da diferença** — mostra a diferença `R1−R2` de cada amostra na
-**ordem em que foram analisadas** (eixo X), com uma **média móvel** (linha destacada)
-que suaviza o ruído e revela **tendências ao longo do tempo/corrida**.
+**ordem cronológica** (quando você informa data e hora) ou na ordem da planilha, com
+uma **média móvel** (linha destacada) que suaviza o ruído e revela **tendências ao
+longo do tempo/corrida**.
 
 - A média móvel deve **oscilar em torno do zero**. Uma **subida ou descida
   sustentada** indica uma **deriva** do sistema (reagente envelhecendo, calibração
   saindo do lugar, degradação do equipamento) — mesmo que cada par individual pareça
   aceitável.
 - Um **degrau/salto abrupto** costuma marcar um **evento**: troca de lote de reagente,
-  recalibração, manutenção. Cruzar a posição do salto com o log do equipamento ajuda
-  a achar a causa.
+  recalibração, manutenção. Cruzar a posição do salto com o log do equipamento (pela
+  data/hora) ajuda a achar a causa.
 - Use a **janela** para ajustar a sensibilidade: janela pequena reage rápido a
   mudanças (mais ruído); janela grande evidencia tendências longas (mais suave).
 """
@@ -493,72 +537,55 @@ que suaviza o ruído e revela **tendências ao longo do tempo/corrida**.
 # ---- Bloco 4: mudança de interpretação ------------------------------------ #
 st.markdown("### 4 · Mudança de interpretação entre R1 e R2")
 st.caption(
-    "Classifique R1 e R2 em faixas (intervalo de referência e/ou limites de decisão "
-    "médica) e veja em quais amostras a **interpretação mudou** da 1ª para a 2ª medição "
-    "— essas são as mais críticas, pois trocariam a conduta clínica."
+    "Informe **um** intervalo de referência ou limite de decisão médica. Cada resultado "
+    "é classificado em Baixo / Normal / Alto e a amostra é marcada como **suspeita** "
+    "quando a interpretação muda de R1 para R2 (troca que alteraria a conduta clínica)."
 )
 
-usar_interp = st.checkbox("Ativar análise de mudança de interpretação", value=True)
+ci1, ci2 = st.columns(2)
+with ci1:
+    txt_inf = st.text_input("Limite inferior do normal (deixe vazio se não usar)", value="")
+with ci2:
+    txt_sup = st.text_input("Limite superior do normal (deixe vazio se não usar)", value="")
+lim_inf, lim_sup = parse_limite(txt_inf), parse_limite(txt_sup)
 
-if usar_interp:
-    st.markdown(
-        "Defina as faixas abaixo. **Adicione quantas linhas quiser** (botão ➕ na tabela). "
-        "Deixe *De* vazio para “menos infinito” e *Até* vazio para “mais infinito”. "
-        "O limite inferior é **incluído** e o superior é **excluído** (`De ≤ valor < Até`)."
-    )
-    faixas_default = pd.DataFrame({
-        "Interpretação": ["Baixo", "Normal", "Alto"],
-        "De (>=)": [np.nan, 70.0, 100.0],
-        "Até (<)": [70.0, 100.0, np.nan],
-    })
-    faixas_edit = st.data_editor(
-        faixas_default,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="faixas_editor",
-        column_config={
-            "Interpretação": st.column_config.TextColumn(
-                "Interpretação", help="Ex.: Normal, Alto, Diabetes, Crítico..."),
-            "De (>=)": st.column_config.NumberColumn(
-                "De (≥)", help="Limite inferior da faixa (incluído). Vazio = −∞.", format="%.4f"),
-            "Até (<)": st.column_config.NumberColumn(
-                "Até (<)", help="Limite superior da faixa (excluído). Vazio = +∞.", format="%.4f"),
-        },
-    )
+if lim_inf is None and lim_sup is None:
+    st.info("Informe pelo menos um dos limites (inferior e/ou superior) para rodar esta análise.")
+elif lim_inf is not None and lim_sup is not None and lim_inf > lim_sup:
+    st.warning("O limite inferior é maior que o superior. Verifique os valores.")
+else:
+    faixa_txt = (f"{lim_inf if lim_inf is not None else '−∞'} a "
+                 f"{lim_sup if lim_sup is not None else '+∞'}")
+    st.caption(f"Faixa normal considerada: **{faixa_txt}** (limites inclusivos).")
 
-    faixas = preparar_faixas(faixas_edit)
-    if len(faixas) == 0:
-        st.warning("Defina ao menos uma faixa com rótulo para rodar a análise de interpretação.")
+    base["Interp_R1"] = base["R1"].apply(lambda v: classificar_ref(v, lim_inf, lim_sup))
+    base["Interp_R2"] = base["R2"].apply(lambda v: classificar_ref(v, lim_inf, lim_sup))
+    base["Mudou_interp"] = base["Interp_R1"] != base["Interp_R2"]
+    n_mudou = int(base["Mudou_interp"].sum())
+
+    cA, cB = st.columns(2)
+    cA.metric("Amostras com mudança de interpretação", f"{n_mudou}")
+    cB.metric("% do total", f"{n_mudou/resumo['n_validos']*100:.1f} %")
+
+    if n_mudou:
+        st.error(
+            f"⚠️ {n_mudou} amostra(s) mudaram de interpretação entre R1 e R2. "
+            "Confira os códigos de barras abaixo — são os pacientes suspeitos."
+        )
+        tab_mud = base.loc[base["Mudou_interp"],
+                           ["ID", "R1", "R2", "Interp_R1", "Interp_R2"]].rename(
+            columns={"ID": "Código de barras", "Interp_R1": "Interpretação R1",
+                     "Interp_R2": "Interpretação R2"})
+        st.dataframe(tab_mud.style.format(precision=3), use_container_width=True)
     else:
-        base["Interp_R1"] = base["R1"].apply(lambda v: classificar_valor(v, faixas))
-        base["Interp_R2"] = base["R2"].apply(lambda v: classificar_valor(v, faixas))
-        base["Mudou_interp"] = base["Interp_R1"] != base["Interp_R2"]
-        n_mudou = int(base["Mudou_interp"].sum())
+        st.success("Nenhuma amostra mudou de interpretação entre R1 e R2.")
 
-        cA, cB = st.columns(2)
-        cA.metric("Amostras com mudança de interpretação", f"{n_mudou}")
-        cB.metric("% do total", f"{n_mudou/resumo['n_validos']*100:.1f} %")
-
-        if n_mudou:
-            st.error(
-                f"⚠️ {n_mudou} amostra(s) mudaram de interpretação entre R1 e R2. "
-                "Confira os códigos de barras abaixo — são os pacientes suspeitos."
-            )
-            tab_mud = base.loc[base["Mudou_interp"],
-                               ["ID", "R1", "R2", "Interp_R1", "Interp_R2"]].rename(
-                columns={"ID": "Código de barras", "Interp_R1": "Interpretação R1",
-                         "Interp_R2": "Interpretação R2"})
-            st.dataframe(tab_mud.style.format(precision=3), use_container_width=True)
-        else:
-            st.success("Nenhuma amostra mudou de interpretação entre R1 e R2.")
-
-        with st.expander("🔀 Matriz de transição (R1 → R2)"):
-            st.caption("Quantas amostras foram de cada interpretação em R1 (linhas) "
-                       "para cada interpretação em R2 (colunas). A diagonal são as que "
-                       "não mudaram.")
-            matriz = pd.crosstab(base["Interp_R1"], base["Interp_R2"],
-                                 rownames=["R1"], colnames=["R2"])
-            st.dataframe(matriz, use_container_width=True)
+    with st.expander("🔀 Matriz de transição (R1 → R2)"):
+        st.caption("Quantas amostras foram de cada interpretação em R1 (linhas) para "
+                   "cada interpretação em R2 (colunas). A diagonal são as que não mudaram.")
+        st.dataframe(pd.crosstab(base["Interp_R1"], base["Interp_R2"],
+                                 rownames=["R1"], colnames=["R2"]),
+                     use_container_width=True)
 
 # ---- Bloco 5: exportar ---------------------------------------------------- #
 st.markdown("### 5 · Exportar resultados")
