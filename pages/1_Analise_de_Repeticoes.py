@@ -561,24 +561,55 @@ else:
     base["Interp_R1"] = base["R1"].apply(lambda v: classificar_ref(v, lim_inf, lim_sup))
     base["Interp_R2"] = base["R2"].apply(lambda v: classificar_ref(v, lim_inf, lim_sup))
     base["Mudou_interp"] = base["Interp_R1"] != base["Interp_R2"]
+    # Situação combinada: suspeito se falhar o erro total OU mudar a interpretação
+    base["Situacao"] = np.where(base["Suspeito_erro"] | base["Mudou_interp"], "Suspeito", "OK")
+
+    def _motivo(row):
+        e, m = row["Suspeito_erro"], row["Mudou_interp"]
+        if e and m:
+            return "Erro total + Mudança de interpretação"
+        if e:
+            return "Erro total"
+        if m:
+            return "Mudança de interpretação"
+        return "—"
+    base["Motivo"] = base.apply(_motivo, axis=1)
+
     n_mudou = int(base["Mudou_interp"].sum())
+    n_erro = int(base["Suspeito_erro"].sum())
+    n_comb = int((base["Situacao"] == "Suspeito").sum())
 
-    cA, cB = st.columns(2)
-    cA.metric("Amostras com mudança de interpretação", f"{n_mudou}")
-    cB.metric("% do total", f"{n_mudou/resumo['n_validos']*100:.1f} %")
+    cA, cB, cC = st.columns(3)
+    cA.metric("Mudança de interpretação", f"{n_mudou}")
+    cB.metric("Suspeitos pelo erro total", f"{n_erro}")
+    cC.metric("Suspeitos (combinado)", f"{n_comb}",
+              help=f"Erro total |(R1−R2)/R1| > {lim_eta:.1f}% OU mudança de interpretação "
+                   "entre R1 e R2.")
 
-    if n_mudou:
-        st.error(
-            f"⚠️ {n_mudou} amostra(s) mudaram de interpretação entre R1 e R2. "
-            "Confira os códigos de barras abaixo — são os pacientes suspeitos."
-        )
-        tab_mud = base.loc[base["Mudou_interp"],
-                           ["ID", "R1", "R2", "Interp_R1", "Interp_R2"]].rename(
-            columns={"ID": "Código de barras", "Interp_R1": "Interpretação R1",
-                     "Interp_R2": "Interpretação R2"})
-        st.dataframe(tab_mud.style.format(precision=3), use_container_width=True)
+    if n_comb:
+        st.error(f"⚠️ {n_comb} amostra(s) suspeita(s) por pelo menos um critério "
+                 "(erro total e/ou mudança de interpretação). Veja a coluna **Situação**.")
     else:
-        st.success("Nenhuma amostra mudou de interpretação entre R1 e R2.")
+        st.success("Nenhuma amostra suspeita pelos critérios combinados.")
+
+    # Tabela consolidada com a coluna Situação (OK/Suspeito) e o motivo
+    tab4 = base.rename(columns={
+        "ID": "Código de barras", "Interp_R1": "Interpretação R1",
+        "Interp_R2": "Interpretação R2", "ETA_abs_%": "|(R1−R2)/R1| %",
+        "Situacao": "Situação",
+    })[["Código de barras", "R1", "R2", "Interpretação R1", "Interpretação R2",
+        "|(R1−R2)/R1| %", "Motivo", "Situação"]]
+
+    def _hl(v):
+        return ("background-color:#FFE3E3; color:#9B1C1C; font-weight:700" if v == "Suspeito"
+                else "background-color:#E7F6EC; color:#0F5132")
+    st.dataframe(tab4.style.format(precision=3).map(_hl, subset=["Situação"]),
+                 use_container_width=True, height=320)
+
+    if n_comb:
+        with st.expander(f"🔎 Ver só os {n_comb} suspeito(s) (combinado)"):
+            st.dataframe(tab4[tab4["Situação"] == "Suspeito"].style.format(precision=3),
+                         use_container_width=True)
 
     with st.expander("🔀 Matriz de transição (R1 → R2)"):
         st.caption("Quantas amostras foram de cada interpretação em R1 (linhas) para "
