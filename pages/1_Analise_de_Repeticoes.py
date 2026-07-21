@@ -273,12 +273,11 @@ def to_excel(df: pd.DataFrame) -> bytes:
 # =========================================================================== #
 #                                INTERFACE
 # =========================================================================== #
-st.markdown("## 🔁 Análise de Repetições (Duplicatas) — Controle da Qualidade Analítica")
+st.markdown("## 🔁 Análise de Repetições (Duplicatas)")
 st.caption(
     "Avalia a concordância entre um primeiro resultado (R1) e sua repetição (R2) "
     "para detectar problemas de equipamento/reagente, e verifica se a interpretação "
-    "clínica mudou entre as duas medições. Complementa a análise de média/mediana "
-    "móvel já existente no DataSift."
+    "clínica mudou entre as duas medições"
 )
 
 # ---- Upload da planilha --------------------------------------------------- #
