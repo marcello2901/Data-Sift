@@ -18,6 +18,10 @@ Cada amostra é identificada pelo código de barras, para rastrear qual paciente
 ficou suspeito. A média móvel das diferenças pode ser ordenada pela data/hora
 do resultado.
 
+Entrada dos dados: (A) uma planilha já com R1 e R2 na mesma linha; ou (B) dois
+relatórios (original e repetição) que o script junta automaticamente por
+código de barras + teste (equivalente ao PROCV do Excel).
+
 Este arquivo é uma PÁGINA do app DataSift (pasta ``pages/``), mas também roda
 de forma independente com ``streamlit run pages/1_Analise_de_Repeticoes.py``.
 """
@@ -170,6 +174,98 @@ def montar_datahora(df: pd.DataFrame, col_data: str | None, col_hora: str | None
 
 
 # --------------------------------------------------------------------------- #
+# 2b. Junção de dois relatórios por código de barras + teste (tipo PROCV)
+# --------------------------------------------------------------------------- #
+def _chave_barcode(serie: pd.Series) -> pd.Series:
+    """Normaliza o código de barras para casar entre planilhas (tira espaços e '.0')."""
+    def f(x):
+        if pd.isna(x):
+            return ""
+        s = str(x).strip().replace("\xa0", "")
+        if re.fullmatch(r"\d+\.0", s):   # código lido como float (123.0) -> 123
+            s = s[:-2]
+        return s
+    return serie.apply(f)
+
+
+def _chave_teste(serie: pd.Series) -> pd.Series:
+    """Normaliza o nome do teste para casar (minúsculas, espaços colapsados)."""
+    def f(x):
+        if pd.isna(x):
+            return ""
+        return re.sub(r"\s+", " ", str(x).strip()).casefold()
+    return serie.apply(f)
+
+
+def _guess_idx(cols, termos, default=0):
+    """Índice da 1ª coluna cujo nome contém um dos termos (pré-seleção dos selects)."""
+    for i, c in enumerate(cols):
+        cl = str(c).lower()
+        if any(t in cl for t in termos):
+            return i
+    return default
+
+
+def juntar_relatorios(df1, df2, id1, ts1, res1, id2, ts2, res2, data1=None, hora1=None):
+    """
+    Junta o relatório original (df1) com o das repetições (df2) casando pela chave
+    composta código de barras + teste — equivale ao PROCV do Excel, mas usando duas
+    colunas como chave (um mesmo código de barras pode ter mais de um teste).
+
+    Devolve:
+      - ``matched``: pares completos, com colunas Código de barras, Teste, R1, R2
+        (e _data/_hora, se informadas no original);
+      - ``status``: todas as amostras (casadas e não casadas) com a coluna Status;
+      - ``stats``: contadores da junção.
+    """
+    a = pd.DataFrame({
+        "_bc": _chave_barcode(df1[id1]).values,
+        "_ts": _chave_teste(df1[ts1]).values,
+        "bc1": df1[id1].astype(str).values,
+        "ts1": df1[ts1].astype(str).values,
+        "R1": df1[res1].values,
+    })
+    if data1:
+        a["_data"] = df1[data1].values
+    if hora1:
+        a["_hora"] = df1[hora1].values
+    b = pd.DataFrame({
+        "_bc": _chave_barcode(df2[id2]).values,
+        "_ts": _chave_teste(df2[ts2]).values,
+        "bc2": df2[id2].astype(str).values,
+        "ts2": df2[ts2].astype(str).values,
+        "R2": df2[res2].values,
+    })
+    a = a[a["_bc"] != ""]
+    b = b[b["_bc"] != ""]
+    dup1 = int(a.duplicated(subset=["_bc", "_ts"]).sum())
+    dup2 = int(b.duplicated(subset=["_bc", "_ts"]).sum())
+    a = a.drop_duplicates(subset=["_bc", "_ts"], keep="first")
+    b = b.drop_duplicates(subset=["_bc", "_ts"], keep="first")
+
+    m = a.merge(b, on=["_bc", "_ts"], how="outer", indicator=True)
+    m["Código de barras"] = m["bc1"].fillna(m["bc2"])
+    m["Teste"] = m["ts1"].fillna(m["ts2"])
+    status_map = {"both": "Par completo",
+                  "left_only": "Só no original (sem repetição)",
+                  "right_only": "Só na repetição (sem original)"}
+    m["Status"] = m["_merge"].map(status_map)
+
+    stats = {
+        "n1": int(len(a)), "n2": int(len(b)),
+        "n_match": int((m["_merge"] == "both").sum()),
+        "n_so_orig": int((m["_merge"] == "left_only").sum()),
+        "n_so_rep": int((m["_merge"] == "right_only").sum()),
+        "dup1": dup1, "dup2": dup2,
+    }
+    extra = [c for c in ["_data", "_hora"] if c in m.columns]
+    matched = (m[m["_merge"] == "both"][["Código de barras", "Teste", "R1", "R2"] + extra]
+               .reset_index(drop=True))
+    status = m[["Código de barras", "Teste", "R1", "R2", "Status"]].reset_index(drop=True)
+    return matched, status, stats
+
+
+# --------------------------------------------------------------------------- #
 # 3. Cálculos estatísticos das duplicatas
 # --------------------------------------------------------------------------- #
 def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
@@ -280,69 +376,178 @@ st.caption(
     "clínica mudou entre as duas medições"
 )
 
-# ---- Upload da planilha --------------------------------------------------- #
+# ---- 1 · Origem dos dados ------------------------------------------------- #
 with st.container(border=True):
-    st.markdown("### 1 · Envie a planilha de resultados")
-    arquivo = st.file_uploader(
-        "Arquivo com as colunas R1, R2 e o código de barras (uma linha por amostra)",
-        type=["csv", "xlsx", "xls", "zip"],
+    st.markdown("### 1 · Origem dos dados")
+    modo = st.radio(
+        "Como você vai fornecer os dados?",
+        ["Uma planilha (R1 e R2 já na mesma linha)",
+         "Dois relatórios (original + repetição) — juntar por código de barras + teste"],
     )
+dois_relatorios = modo.startswith("Dois")
 
-if arquivo is None:
-    st.info(
-        "📄 Envie um arquivo para começar. Ele deve conter, no mínimo, três colunas: "
-        "o primeiro resultado (R1), a repetição (R2) e o código de barras que identifica "
-        "a amostra. Colunas de analito, data e hora são opcionais."
-    )
-    st.stop()
+# Variáveis que os dois modos preenchem antes da análise:
+col_r1 = col_r2 = col_id = col_analito = col_data = col_hora = None
+df = None
 
-df = carregar_planilha(arquivo.getvalue(), arquivo.name)
-if df is None or df.empty:
-    st.error("Não foi possível ler a planilha ou ela está vazia.")
-    st.stop()
+if not dois_relatorios:
+    # ===================== MODO A · uma planilha ===========================
+    with st.container(border=True):
+        st.markdown("#### Envie a planilha de resultados")
+        arquivo = st.file_uploader(
+            "Arquivo com as colunas R1, R2 e o código de barras (uma linha por amostra)",
+            type=["csv", "xlsx", "xls", "zip"], key="upload_unico",
+        )
+    if arquivo is None:
+        st.info(
+            "📄 Envie um arquivo para começar. Ele deve conter, no mínimo, três colunas: "
+            "o primeiro resultado (R1), a repetição (R2) e o código de barras que identifica "
+            "a amostra. Colunas de analito, data e hora são opcionais."
+        )
+        st.stop()
+    df = carregar_planilha(arquivo.getvalue(), arquivo.name)
+    if df is None or df.empty:
+        st.error("Não foi possível ler a planilha ou ela está vazia.")
+        st.stop()
+    st.success(f"Planilha carregada: {len(df)} linhas × {len(df.columns)} colunas.")
 
-st.success(f"Planilha carregada: {len(df)} linhas × {len(df.columns)} colunas.")
+    with st.container(border=True):
+        st.markdown("### 2 · Indique as colunas")
+        colunas = list(df.columns)
+        opc = ["(nenhuma)"] + colunas
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            col_r1 = st.selectbox("Coluna do **R1** (1º resultado)", colunas, index=0)
+        with c2:
+            idx2 = 1 if len(colunas) > 1 else 0
+            col_r2 = st.selectbox("Coluna do **R2** (repetição)", colunas, index=idx2)
+        with c3:
+            _cid = st.selectbox("Coluna do **código de barras** (identificador)",
+                                ["(usar nº da linha)"] + colunas, index=0)
+            col_id = None if _cid == "(usar nº da linha)" else _cid
+        c4, c5, c6 = st.columns(3)
+        with c4:
+            col_analito = st.selectbox("Coluna de analito/exame (opcional)", opc, index=0)
+        with c5:
+            _cd = st.selectbox("Coluna de **data** (opcional)", opc, index=0)
+            col_data = None if _cd == "(nenhuma)" else _cd
+        with c6:
+            _ch = st.selectbox("Coluna de **hora** (opcional)", opc, index=0)
+            col_hora = None if _ch == "(nenhuma)" else _ch
+        z_opt = st.selectbox("Nível de confiança (Z)",
+                             ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
+        z = 1.96 if "1,96" in z_opt else 1.65
 
-# ---- Mapeamento de colunas ------------------------------------------------ #
-with st.container(border=True):
-    st.markdown("### 2 · Indique as colunas")
-    colunas = list(df.columns)
-    opc = ["(nenhuma)"] + colunas
+    if col_r1 == col_r2:
+        st.warning("R1 e R2 estão apontando para a mesma coluna. Selecione colunas diferentes.")
+        st.stop()
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        col_r1 = st.selectbox("Coluna do **R1** (1º resultado)", colunas, index=0)
-    with c2:
-        idx2 = 1 if len(colunas) > 1 else 0
-        col_r2 = st.selectbox("Coluna do **R2** (repetição)", colunas, index=idx2)
-    with c3:
-        col_id = st.selectbox("Coluna do **código de barras** (identificador)",
-                              ["(usar nº da linha)"] + colunas, index=0)
-        col_id = None if col_id == "(usar nº da linha)" else col_id
+else:
+    # ============= MODO B · dois relatórios (junção tipo PROCV) =============
+    with st.container(border=True):
+        st.markdown("#### Envie os dois relatórios")
+        u1, u2 = st.columns(2)
+        with u1:
+            arq1 = st.file_uploader("1️⃣ Relatório **original** (vira R1)",
+                                    type=["csv", "xlsx", "xls", "zip"], key="upload_orig")
+        with u2:
+            arq2 = st.file_uploader("2️⃣ Relatório da **repetição** (vira R2)",
+                                    type=["csv", "xlsx", "xls", "zip"], key="upload_rep")
+    if arq1 is None or arq2 is None:
+        st.info(
+            "📄 Envie os **dois** relatórios. O script casa as amostras por "
+            "**código de barras + teste** (como um PROCV) e monta os pares R1/R2 — "
+            "usar o teste na chave é importante porque um mesmo código de barras pode "
+            "ter mais de um teste."
+        )
+        st.stop()
+    df1 = carregar_planilha(arq1.getvalue(), arq1.name)
+    df2 = carregar_planilha(arq2.getvalue(), arq2.name)
+    if df1 is None or df1.empty or df2 is None or df2.empty:
+        st.error("Não foi possível ler um dos relatórios (ou algum está vazio).")
+        st.stop()
+    st.success(f"Original: {len(df1)}×{len(df1.columns)}  ·  Repetição: {len(df2)}×{len(df2.columns)}.")
 
-    c4, c5, c6 = st.columns(3)
-    with c4:
-        col_analito = st.selectbox("Coluna de analito/exame (opcional)", opc, index=0)
-    with c5:
-        col_data = st.selectbox("Coluna de **data** (opcional)", opc, index=0)
-        col_data = None if col_data == "(nenhuma)" else col_data
-    with c6:
-        col_hora = st.selectbox("Coluna de **hora** (opcional)", opc, index=0)
-        col_hora = None if col_hora == "(nenhuma)" else col_hora
+    with st.container(border=True):
+        st.markdown("### 2 · Indique as colunas de cada relatório")
+        st.caption("Código de barras + teste são a **chave** que casa as amostras; o "
+                   "resultado de cada relatório vira R1 (original) e R2 (repetição).")
+        cols1, cols2 = list(df1.columns), list(df2.columns)
 
-    z_opt = st.selectbox("Nível de confiança (Z)",
-                         ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
-    z = 1.96 if "1,96" in z_opt else 1.65
+        st.markdown("**Relatório original (R1)**")
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            id1 = st.selectbox("Código de barras", cols1,
+                               index=_guess_idx(cols1, ["barra", "cod", "amostra"]), key="id1")
+        with a2:
+            ts1 = st.selectbox("Teste/exame", cols1,
+                               index=_guess_idx(cols1, ["teste", "exame", "analito", "prova"]), key="ts1")
+        with a3:
+            res1 = st.selectbox("Resultado → R1", cols1,
+                                index=_guess_idx(cols1, ["result", "valor", "dosagem"]), key="res1")
+        a4, a5 = st.columns(2)
+        with a4:
+            _d1 = st.selectbox("Data (opcional)", ["(nenhuma)"] + cols1, index=0, key="data1")
+            data1 = None if _d1 == "(nenhuma)" else _d1
+        with a5:
+            _h1 = st.selectbox("Hora (opcional)", ["(nenhuma)"] + cols1, index=0, key="hora1")
+            hora1 = None if _h1 == "(nenhuma)" else _h1
 
-if col_r1 == col_r2:
-    st.warning("R1 e R2 estão apontando para a mesma coluna. Selecione colunas diferentes.")
-    st.stop()
+        st.markdown("**Relatório da repetição (R2)**")
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            id2 = st.selectbox("Código de barras", cols2,
+                               index=_guess_idx(cols2, ["barra", "cod", "amostra"]), key="id2")
+        with b2:
+            ts2 = st.selectbox("Teste/exame", cols2,
+                               index=_guess_idx(cols2, ["teste", "exame", "analito", "prova"]), key="ts2")
+        with b3:
+            res2 = st.selectbox("Resultado → R2", cols2,
+                                index=_guess_idx(cols2, ["result", "valor", "dosagem"]), key="res2")
 
-# Filtro opcional por analito
+        z_opt = st.selectbox("Nível de confiança (Z)",
+                             ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
+        z = 1.96 if "1,96" in z_opt else 1.65
+
+    matched, status_merge, stats = juntar_relatorios(
+        df1, df2, id1, ts1, res1, id2, ts2, res2, data1=data1, hora1=hora1)
+
+    st.markdown("#### Resultado da junção (PROCV por código de barras + teste)")
+    j1, j2, j3, j4 = st.columns(4)
+    j1.metric("Pares casados (R1+R2)", f"{stats['n_match']}")
+    j2.metric("Só no original", f"{stats['n_so_orig']}",
+              help="Amostras/testes do relatório original que não tiveram repetição.")
+    j3.metric("Só na repetição", f"{stats['n_so_rep']}",
+              help="Repetições sem correspondente no relatório original.")
+    j4.metric("Chaves duplicadas removidas", f"{stats['dup1'] + stats['dup2']}",
+              help="Código de barras + teste repetidos dentro de um mesmo relatório "
+                   "(mantida a 1ª ocorrência).")
+
+    if stats["n_match"] == 0:
+        st.error("Nenhuma amostra casou por código de barras + teste. Confira se as "
+                 "colunas de código de barras e de teste estão corretas nos dois relatórios.")
+        st.stop()
+
+    if stats["n_so_orig"] or stats["n_so_rep"]:
+        with st.expander(f"🔎 Ver {stats['n_so_orig'] + stats['n_so_rep']} amostra(s) não casada(s)"):
+            nc = status_merge[status_merge["Status"] != "Par completo"]
+            st.dataframe(nc, use_container_width=True, height=240)
+            st.download_button(
+                "⬇️ Baixar não casadas (CSV)",
+                data=nc.to_csv(index=False, sep=";", decimal=",",
+                               encoding="utf-8-sig").encode("utf-8-sig"),
+                file_name="amostras_nao_casadas.csv", mime="text/csv")
+
+    df = matched
+    col_r1, col_r2, col_id, col_analito = "R1", "R2", "Código de barras", "Teste"
+    col_data = "_data" if "_data" in matched.columns else None
+    col_hora = "_hora" if "_hora" in matched.columns else None
+
+# ---- Filtro opcional por analito/teste ------------------------------------ #
 df_uso = df
-if col_analito != "(nenhuma)":
+if col_analito and col_analito != "(nenhuma)":
     valores = ["(todos)"] + sorted(df[col_analito].dropna().astype(str).unique().tolist())
-    escolha = st.selectbox("Filtrar por analito", valores, index=0)
+    escolha = st.selectbox("Filtrar por analito/teste", valores, index=0)
     if escolha != "(todos)":
         df_uso = df[df[col_analito].astype(str) == escolha]
 
