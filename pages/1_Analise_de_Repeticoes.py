@@ -206,7 +206,8 @@ def _guess_idx(cols, termos, default=0):
     return default
 
 
-def juntar_relatorios(df1, df2, id1, ts1, res1, id2, ts2, res2, data1=None, hora1=None):
+def juntar_relatorios(df1, df2, id1, ts1, res1, id2, ts2, res2, data1=None, hora1=None,
+                      extras1=None, extras2=None):
     """
     Junta o relatório original (df1) com o das repetições (df2) casando pela chave
     composta código de barras + teste — equivale ao PROCV do Excel, mas usando duas
@@ -229,6 +230,9 @@ def juntar_relatorios(df1, df2, id1, ts1, res1, id2, ts2, res2, data1=None, hora
         a["_data"] = df1[data1].values
     if hora1:
         a["_hora"] = df1[hora1].values
+    if extras1:
+        for _n, _c in extras1.items():
+            a[_n] = df1[_c].values
     b = pd.DataFrame({
         "_bc": _chave_barcode(df2[id2]).values,
         "_ts": _chave_teste(df2[ts2]).values,
@@ -236,6 +240,9 @@ def juntar_relatorios(df1, df2, id1, ts1, res1, id2, ts2, res2, data1=None, hora
         "ts2": df2[ts2].astype(str).values,
         "R2": df2[res2].values,
     })
+    if extras2:
+        for _n, _c in extras2.items():
+            b[_n] = df2[_c].values
     a = a[a["_bc"] != ""]
     b = b[b["_bc"] != ""]
     dup1 = int(a.duplicated(subset=["_bc", "_ts"]).sum())
@@ -258,7 +265,8 @@ def juntar_relatorios(df1, df2, id1, ts1, res1, id2, ts2, res2, data1=None, hora
         "n_so_rep": int((m["_merge"] == "right_only").sum()),
         "dup1": dup1, "dup2": dup2,
     }
-    extra = [c for c in ["_data", "_hora"] if c in m.columns]
+    extra = [c for c in (["_data", "_hora"] + list((extras1 or {}).keys())
+                         + list((extras2 or {}).keys())) if c in m.columns]
     matched = (m[m["_merge"] == "both"][["Código de barras", "Teste", "R1", "R2"] + extra]
                .reset_index(drop=True))
     status = m[["Código de barras", "Teste", "R1", "R2", "Status"]].reset_index(drop=True)
@@ -546,13 +554,31 @@ else:
         with a3:
             res1 = st.selectbox("Resultado → R1", cols1,
                                 index=_guess_idx(cols1, ["result", "valor", "dosagem"]), key="res1")
-        a4, a5 = st.columns(2)
+        opc1 = ["(nenhuma)"] + cols1
+        a4, a5, a6 = st.columns(3)
         with a4:
-            _d1 = st.selectbox("Data (opcional)", ["(nenhuma)"] + cols1, index=0, key="data1")
+            _d1 = st.selectbox("Data do R1 (opcional)", opc1, index=0, key="data1")
             data1 = None if _d1 == "(nenhuma)" else _d1
         with a5:
-            _h1 = st.selectbox("Hora (opcional)", ["(nenhuma)"] + cols1, index=0, key="hora1")
+            _h1 = st.selectbox("Hora do R1 (opcional)", opc1, index=0, key="hora1")
             hora1 = None if _h1 == "(nenhuma)" else _h1
+        with a6:
+            _rf1 = st.selectbox("Intervalo de referência (opcional)", opc1, index=0, key="ref1b")
+            ref1 = None if _rf1 == "(nenhuma)" else _rf1
+        a7, a8, a9 = st.columns(3)
+        with a7:
+            _eq1 = st.selectbox("Equipamento do R1 (opcional)", opc1, index=0, key="eq1b")
+            eq1 = None if _eq1 == "(nenhuma)" else _eq1
+        with a8:
+            _ra1 = st.selectbox("Resultado anterior do R1 (opcional)", opc1, index=0, key="ra1b")
+            ra1 = None if _ra1 == "(nenhuma)" else _ra1
+        with a9:
+            _ida1 = st.selectbox("Idade do paciente (opcional)", opc1, index=0, key="ida1b")
+            ida1 = None if _ida1 == "(nenhuma)" else _ida1
+        a10, _a11 = st.columns(2)
+        with a10:
+            _sex1 = st.selectbox("Sexo do paciente (opcional)", opc1, index=0, key="sex1b")
+            sex1 = None if _sex1 == "(nenhuma)" else _sex1
 
         st.markdown("**Relatório da repetição (R2)**")
         b1, b2, b3 = st.columns(3)
@@ -565,13 +591,24 @@ else:
         with b3:
             res2 = st.selectbox("Resultado → R2", cols2,
                                 index=_guess_idx(cols2, ["result", "valor", "dosagem"]), key="res2")
+        b4, _b5 = st.columns(2)
+        with b4:
+            _eq2 = st.selectbox("Equipamento do R2 (opcional)", ["(nenhuma)"] + cols2, index=0, key="eq2b")
+            eq2 = None if _eq2 == "(nenhuma)" else _eq2
 
         z_opt = st.selectbox("Nível de confiança (Z)",
                              ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
         z = 1.96 if "1,96" in z_opt else 1.65
 
+    extras1_map = {}
+    for _nm, _cl in [("Equip. R1", eq1), ("R1 anterior", ra1), ("Idade", ida1),
+                     ("Sexo", sex1), ("RefRange", ref1)]:
+        if _cl:
+            extras1_map[_nm] = _cl
+    extras2_map = {"Equip. R2": eq2} if eq2 else {}
     matched, status_merge, stats = juntar_relatorios(
-        df1, df2, id1, ts1, res1, id2, ts2, res2, data1=data1, hora1=hora1)
+        df1, df2, id1, ts1, res1, id2, ts2, res2, data1=data1, hora1=hora1,
+        extras1=extras1_map, extras2=extras2_map)
 
     st.markdown("#### Resultado da junção (PROCV por código de barras + teste)")
     j1, j2, j3, j4 = st.columns(4)
@@ -603,6 +640,12 @@ else:
     col_r1, col_r2, col_id, col_analito = "R1", "R2", "Código de barras", "Teste"
     col_data = "_data" if "_data" in matched.columns else None
     col_hora = "_hora" if "_hora" in matched.columns else None
+    col_equip1 = "Equip. R1" if "Equip. R1" in matched.columns else None
+    col_equip2 = "Equip. R2" if "Equip. R2" in matched.columns else None
+    col_r1ant = "R1 anterior" if "R1 anterior" in matched.columns else None
+    col_idade = "Idade" if "Idade" in matched.columns else None
+    col_sexo = "Sexo" if "Sexo" in matched.columns else None
+    col_ref = "RefRange" if "RefRange" in matched.columns else None
 
 # ---- Filtro opcional por analito/teste ------------------------------------ #
 df_uso = df
