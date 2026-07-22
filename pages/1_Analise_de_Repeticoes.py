@@ -967,8 +967,8 @@ _rest = [c for c in export.columns if c not in _lead]
 export = export[_lead + _rest]
 export = export.rename(columns={
     "ID": "Código de barras", "R1": "1º Resultado", "R2": "Repetição",
-    "R1 anterior": "Resultado anterior", "Equip. R1": "Equipamento R1",
-    "Equip. R2": "Equipamento R2",
+    "R1 anterior": "Resultado anterior", "Equip. R1": "Equipamento 1º Resultado",
+    "Equip. R2": "Equipamento Repetição",
 })
 
 d1, d2 = st.columns(2)
