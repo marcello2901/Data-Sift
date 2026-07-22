@@ -9,10 +9,10 @@ equipamento/reagente avaliando o quanto a segunda medição (R2) concorda com a
 primeira (R1).
 
 Blocos de análise:
-  1) Estatística analítica das duplicatas: média, DP (desvio-padrão de
-     repetibilidade), CV%, erro aleatório (DP x 1,96) e erro total analítico.
-  2) Mudança de interpretação entre R1 e R2 com base em um intervalo de
-     referência / limite de decisão médica definido pelo usuário.
+  3) Avaliação das repetições: marca cada amostra como OK/Suspeita combinando o
+     erro total |(R1−R2)/R1| acima de um limite e a mudança de interpretação
+     (intervalo de referência da própria planilha ou informado manualmente).
+  4) Gráficos de apoio: Bland-Altman e média móvel das diferenças (deriva).
 
 Cada amostra é identificada pelo código de barras, para rastrear qual paciente
 ficou suspeito. A média móvel das diferenças pode ser ordenada pela data/hora
@@ -269,7 +269,7 @@ def juntar_relatorios(df1, df2, id1, ts1, res1, id2, ts2, res2, data1=None, hora
 # 3. Cálculos estatísticos das duplicatas
 # --------------------------------------------------------------------------- #
 def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
-                      col_id: str | None = None, datahora=None, z: float = 1.96):
+                      col_id: str | None = None, datahora=None, extras=None, z: float = 1.96):
     """
     Recebe o DataFrame e devolve:
       - tabela por par (ID, R1, R2, média, diferença, erro relativo %, RPD %, DataHora)
@@ -290,6 +290,10 @@ def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
     if datahora is not None:
         dados["DataHora"] = pd.to_datetime(datahora).values
     base = pd.DataFrame(dados)
+    # Colunas adicionais (equipamento, idade, sexo, etc.) alinhadas por posição:
+    if extras:
+        for _nome, _val in extras.items():
+            base[_nome] = np.asarray(_val)
 
     n_total = len(base)
     base = base.dropna(subset=["R1", "R2"])
@@ -341,17 +345,49 @@ def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
 # --------------------------------------------------------------------------- #
 # 4. Classificação por intervalo de referência / limite de decisão médica
 # --------------------------------------------------------------------------- #
+def parse_ref_range(txt):
+    """
+    Extrai (limite_inferior, limite_superior) de um texto de intervalo de
+    referência. Aceita formatos como '136.00 - 145.00', '0,5 - 1,2', '< 200',
+    '> 40', '<= 5'. Devolve None no limite que não existir; (None, None) quando
+    não consegue interpretar (ex.: 'Negativo', vazio).
+    """
+    if pd.isna(txt):
+        return (None, None)
+    s = str(txt).strip()
+    if s == "":
+        return (None, None)
+    low = s.lower()
+    # números sem sinal (o sinal de intervalo '-' não deve virar negativo):
+    nums = re.findall(r"\d+(?:[.,]\d+)?", s)
+    vals = [float(n.replace(",", ".")) for n in nums]
+    if not vals:
+        return (None, None)
+    if ("<" in s or "≤" in s or "menor" in low or "até" in low or "up to" in low):
+        return (None, vals[-1])
+    if (">" in s or "≥" in s or "maior" in low or "acima" in low):
+        return (vals[0], None)
+    if len(vals) >= 2:
+        return (min(vals[0], vals[1]), max(vals[0], vals[1]))
+    return (None, None)   # um único número sem sinal -> ambíguo, não classifica
+
+
 def classificar_ref(valor, limite_inf, limite_sup):
     """
     Classifica um valor em Baixo / Normal / Alto a partir do intervalo de
     referência. Limites são inclusivos (Normal = inf <= valor <= sup). Qualquer
-    limite pode ficar em branco (None) para representar "sem limite" daquele lado.
+    limite pode ficar vazio (None/NaN) para representar "sem limite" daquele lado;
+    se ambos estiverem vazios, devolve '—' (sem intervalo definido).
     """
     if pd.isna(valor):
         return "—"
-    if limite_inf is not None and valor < limite_inf:
+    inf_ok = limite_inf is not None and pd.notna(limite_inf)
+    sup_ok = limite_sup is not None and pd.notna(limite_sup)
+    if not inf_ok and not sup_ok:
+        return "—"
+    if inf_ok and valor < limite_inf:
         return "Baixo"
-    if limite_sup is not None and valor > limite_sup:
+    if sup_ok and valor > limite_sup:
         return "Alto"
     return "Normal"
 
@@ -388,6 +424,7 @@ dois_relatorios = modo.startswith("Dois")
 
 # Variáveis que os dois modos preenchem antes da análise:
 col_r1 = col_r2 = col_id = col_analito = col_data = col_hora = None
+col_equip1 = col_equip2 = col_r1ant = col_idade = col_sexo = col_ref = None
 df = None
 
 if not dois_relatorios:
@@ -434,6 +471,29 @@ if not dois_relatorios:
         with c6:
             _ch = st.selectbox("Coluna de **hora** (opcional)", opc, index=0)
             col_hora = None if _ch == "(nenhuma)" else _ch
+
+        with st.expander("Colunas opcionais (equipamento, resultado anterior, idade, sexo, intervalo de referência)"):
+            o1, o2, o3 = st.columns(3)
+            with o1:
+                _e1 = st.selectbox("Equipamento do R1", opc, index=0, key="equip1")
+                col_equip1 = None if _e1 == "(nenhuma)" else _e1
+            with o2:
+                _e2 = st.selectbox("Equipamento do R2", opc, index=0, key="equip2")
+                col_equip2 = None if _e2 == "(nenhuma)" else _e2
+            with o3:
+                _ra = st.selectbox("Resultado anterior do R1", opc, index=0, key="r1ant")
+                col_r1ant = None if _ra == "(nenhuma)" else _ra
+            o4, o5, o6 = st.columns(3)
+            with o4:
+                _id = st.selectbox("Idade do paciente", opc, index=0, key="idade")
+                col_idade = None if _id == "(nenhuma)" else _id
+            with o5:
+                _sx = st.selectbox("Sexo do paciente", opc, index=0, key="sexo")
+                col_sexo = None if _sx == "(nenhuma)" else _sx
+            with o6:
+                _rf = st.selectbox("Intervalo de referência (Ref. ranges)", opc, index=0, key="refcol")
+                col_ref = None if _rf == "(nenhuma)" else _rf
+
         z_opt = st.selectbox("Nível de confiança (Z)",
                              ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
         z = 1.96 if "1,96" in z_opt else 1.65
@@ -551,9 +611,23 @@ if col_analito and col_analito != "(nenhuma)":
     if escolha != "(todos)":
         df_uso = df[df[col_analito].astype(str) == escolha]
 
+# ---- Colunas adicionais para exibir/avaliar (alinhadas por posição) ------- #
+extras = {}
+if col_data and col_data in df_uso.columns:
+    _dd = pd.to_datetime(df_uso[col_data], errors="coerce", dayfirst=True)
+    extras["Data R1"] = _dd.dt.strftime("%d/%m/%Y").fillna("").values
+if col_hora and col_hora in df_uso.columns:
+    extras["Hora R1"] = df_uso[col_hora].astype(str).replace({"NaT": "", "nan": ""}).values
+for _nome, _col in [("Equip. R1", col_equip1), ("Equip. R2", col_equip2),
+                    ("R1 anterior", col_r1ant), ("Idade", col_idade),
+                    ("Sexo", col_sexo), ("RefRange", col_ref)]:
+    if _col and _col in df_uso.columns:
+        extras[_nome] = df_uso[_col].values
+
 # ---- Cálculo -------------------------------------------------------------- #
 datahora = montar_datahora(df_uso, col_data, col_hora)
-base, resumo = calcular_metricas(df_uso, col_r1, col_r2, col_id=col_id, datahora=datahora, z=z)
+base, resumo = calcular_metricas(df_uso, col_r1, col_r2, col_id=col_id,
+                                 datahora=datahora, extras=extras, z=z)
 
 if resumo["n_validos"] == 0:
     st.error(
@@ -569,77 +643,136 @@ if descartados > 0:
         f"R1 ou R2, ou por R1 = 0 (indefinido em (R1−R2)/R1)."
     )
 
-# ---- Bloco 3: estatística analítica --------------------------------------- #
-st.markdown("### 3 · Estatística analítica das duplicatas")
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Nº de pares válidos", f"{resumo['n_validos']}")
-m2.metric("Média global", f"{resumo['media_global']:.3f}")
-m3.metric("DP (repetibilidade)", f"{resumo['dp_repet']:.3f}")
-m4.metric("CV analítico", f"{resumo['cv_analitico']:.2f} %")
+# ---- Bloco 3: avaliação das repetições ------------------------------------ #
+st.markdown("### 3 · Avaliação das repetições")
+st.caption(
+    "Marca cada amostra como **OK** ou **Suspeita** combinando dois critérios: o "
+    "**erro total** |(R1−R2)/R1| acima do limite aceitável e a **mudança de "
+    "interpretação** (intervalo de referência / limite de decisão médica) entre R1 e R2."
+)
 
-m5, m6, m7, m8 = st.columns(4)
-m5.metric(f"Erro aleatório (DP × {z})", f"{resumo['erro_aleatorio']:.3f}")
-m6.metric("Viés médio (R1−R2)", f"{resumo['vies_medio']:.3f}",
-          help="Diferença sistemática média entre R1 e R2. Próximo de zero é o esperado.")
-m7.metric("Erro total médio |(R1−R2)/R1|", f"{resumo['eta_medio_abs_pct']:.2f} %")
-m8.metric(f"Erro total (Westgard: |viés%|+{z}·CV%)", f"{resumo['eta_westgard']:.2f} %")
-
-with st.expander("ℹ️ Como cada número é calculado"):
-    st.markdown(
-        f"""
-- **Média global** = média dos pontos médios de cada par, (R1+R2)/2.
-- **DP (repetibilidade)** = desvio-padrão analítico estimado a partir das
-  diferenças das duplicatas: `Sr = √( Σ(R1−R2)² / (2·n) )`. É a forma correta de
-  estimar a imprecisão em duplicatas — o DP simples de todos os valores mede a
-  variação **entre pacientes**, não a do método.
-- **CV analítico (%)** = `Sr / Média × 100`. Mede a imprecisão relativa do método.
-- **Erro aleatório** = `DP × {z}` — limite do erro aleatório para o Z escolhido
-  (Z = 1,96 ≈ 95% bilateral; Z = 1,65 ≈ 95% unilateral).
-- **Viés médio** = média de (R1−R2); indica erro **sistemático** entre a 1ª e a 2ª medição.
-- **Erro total médio |(R1−R2)/R1|** = média do módulo da sua fórmula, em %.
-- **Erro total (Westgard)** = `|viés%| + {z}·CV%` — modelo clássico de erro total
-  analítico (sistemático + aleatório), mostrado para comparação com a sua fórmula.
-"""
-    )
-
-# Limite de aceitação para o erro total (%), para sinalizar pares suspeitos
+# --- Critério 1: erro total máximo ---
 lim_eta = st.number_input(
-    "Limite de aceitação para |Erro total (R1−R2)/R1| — sinaliza pares acima deste valor (%)",
+    "Limite de aceitação: Erro Total Máximo",
     min_value=0.0, value=10.0, step=0.5,
-    help="Defina conforme o erro total admissível do seu analito (ex.: especificação "
-         "por variação biológica, CLIA, RDC). Pares acima disto ficam marcados.",
+    help="Erro total admissível para |(R1−R2)/R1|, em %. Pares acima disto são "
+         "sinalizados como suspeitos. Defina conforme a especificação do analito "
+         "(variação biológica, CLIA, RDC).",
 )
 base["Suspeito_erro"] = base["ETA_abs_%"] > lim_eta
-n_susp = int(base["Suspeito_erro"].sum())
-if n_susp:
-    st.error(f"⚠️ {n_susp} par(es) ({n_susp/resumo['n_validos']*100:.1f}%) acima do limite de {lim_eta:.1f}%.")
+
+# --- Critério 2: intervalo de referência / limite de decisão médica ---
+st.markdown("**Intervalo de referência / limite de decisão médica**")
+opcoes_ref = (["Usar o do sistema (coluna da planilha)"] if "RefRange" in base.columns else [])
+opcoes_ref.append("Inserir manualmente")
+origem_ref = st.radio("De onde vem o intervalo?", opcoes_ref, horizontal=True,
+                      label_visibility="collapsed")
+
+tem_ref = False
+if origem_ref.startswith("Usar o do sistema"):
+    _par = base["RefRange"].apply(parse_ref_range)
+    base["_lo"] = [p[0] for p in _par]
+    base["_hi"] = [p[1] for p in _par]
+    n_falha = int(sum(1 for p in _par if p[0] is None and p[1] is None))
+    tem_ref = n_falha < len(base)
+    st.caption("Cada amostra é avaliada pelo **seu próprio** intervalo de referência "
+               "(o da coluna já considera teste, idade e sexo do paciente).")
+    if n_falha:
+        st.warning(f"{n_falha} amostra(s) com intervalo não interpretável — ficam como "
+                   "'—' e não contam como mudança de interpretação.")
 else:
-    st.success(f"Nenhum par acima do limite de {lim_eta:.1f}%.")
+    ci1, ci2 = st.columns(2)
+    with ci1:
+        txt_inf = st.text_input("Limite inferior do normal (deixe vazio se não usar)", value="")
+    with ci2:
+        txt_sup = st.text_input("Limite superior do normal (deixe vazio se não usar)", value="")
+    lim_inf, lim_sup = parse_limite(txt_inf), parse_limite(txt_sup)
+    if lim_inf is not None and lim_sup is not None and lim_inf > lim_sup:
+        st.warning("O limite inferior é maior que o superior. Verifique os valores.")
+    base["_lo"] = lim_inf
+    base["_hi"] = lim_sup
+    tem_ref = (lim_inf is not None) or (lim_sup is not None)
+    if tem_ref:
+        faixa_txt = (f"{lim_inf if lim_inf is not None else '−∞'} a "
+                     f"{lim_sup if lim_sup is not None else '+∞'}")
+        st.caption(f"Faixa normal: **{faixa_txt}** (limites inclusivos, aplicada a todas as amostras).")
+    else:
+        st.info("Sem intervalo definido: a avaliação usa **apenas** o critério de erro total.")
 
-# Tabela por par (com código de barras)
-tabela = base.rename(columns={
-    "ID": "Código de barras", "Media_par": "Média", "Diferenca": "R1−R2",
-    "Dif_abs": "|R1−R2|", "CV_par_%": "CV par %", "ETA_%": "(R1−R2)/R1 %",
-    "ETA_abs_%": "|(R1−R2)/R1| %", "RPD_%": "RPD % (simétrico)",
-    "Suspeito_erro": "Suspeito",
+# --- Classificação e situação combinada ---
+if tem_ref:
+    base["Interp_R1"] = base.apply(lambda r: classificar_ref(r["R1"], r["_lo"], r["_hi"]), axis=1)
+    base["Interp_R2"] = base.apply(lambda r: classificar_ref(r["R2"], r["_lo"], r["_hi"]), axis=1)
+    base["Mudou_interp"] = ((base["Interp_R1"] != base["Interp_R2"])
+                            & (base["Interp_R1"] != "—") & (base["Interp_R2"] != "—"))
+else:
+    base["Interp_R1"] = "—"
+    base["Interp_R2"] = "—"
+    base["Mudou_interp"] = False
+
+base["Situacao"] = np.where(base["Suspeito_erro"] | base["Mudou_interp"], "Suspeito", "OK")
+
+def _motivo(row):
+    e, m = row["Suspeito_erro"], row["Mudou_interp"]
+    if e and m:
+        return "Erro total + Mudança de interpretação"
+    if e:
+        return "Erro total"
+    if m:
+        return "Mudança de interpretação"
+    return "—"
+base["Motivo"] = base.apply(_motivo, axis=1)
+
+n_mudou = int(base["Mudou_interp"].sum())
+n_erro = int(base["Suspeito_erro"].sum())
+n_comb = int((base["Situacao"] == "Suspeito").sum())
+
+cA, cB, cC = st.columns(3)
+cA.metric("Mudança de interpretação", f"{n_mudou}")
+cB.metric("Suspeitos pelo erro total", f"{n_erro}")
+cC.metric("Suspeitos (combinado)", f"{n_comb}",
+          help=f"Erro total |(R1−R2)/R1| > {lim_eta:.1f}% OU mudança de interpretação entre R1 e R2.")
+
+if n_comb:
+    st.error(f"⚠️ {n_comb} amostra(s) suspeita(s) por pelo menos um critério "
+             "(erro total e/ou mudança de interpretação). Veja a coluna **Situação**.")
+else:
+    st.success("Nenhuma amostra suspeita pelos critérios combinados.")
+
+# --- Tabela consolidada (com as colunas adicionais informadas) ---
+tab3 = base.rename(columns={
+    "ID": "Código de barras", "Interp_R1": "Interpretação R1",
+    "Interp_R2": "Interpretação R2", "ETA_abs_%": "|(R1−R2)/R1| %",
+    "Situacao": "Situação",
 })
-st.dataframe(
-    tabela[["Código de barras", "R1", "R2", "Média", "R1−R2", "|R1−R2|", "CV par %",
-            "(R1−R2)/R1 %", "|(R1−R2)/R1| %", "RPD % (simétrico)", "Suspeito"]]
-    .style.format(precision=3),
-    use_container_width=True, height=320,
-)
-if n_susp:
-    with st.expander(f"🔎 Ver só os {n_susp} suspeito(s) pelo erro total"):
-        st.dataframe(
-            tabela.loc[tabela["Suspeito"], ["Código de barras", "R1", "R2",
-                                            "(R1−R2)/R1 %", "|(R1−R2)/R1| %"]]
-            .style.format(precision=3),
-            use_container_width=True,
-        )
+cols_extra = [c for c in ["Data R1", "Hora R1", "Equip. R1", "Equip. R2",
+                          "R1 anterior", "Idade", "Sexo"] if c in tab3.columns]
+cols_interp = ["Interpretação R1", "Interpretação R2"] if tem_ref else []
+col_ordem = (["Código de barras"] + cols_extra + ["R1", "R2"] + cols_interp
+             + ["|(R1−R2)/R1| %", "Motivo", "Situação"])
+tab3 = tab3[col_ordem]
 
-# ---- Gráficos ------------------------------------------------------------- #
-st.markdown("#### Gráficos de apoio")
+def _hl(v):
+    return ("background-color:#FFE3E3; color:#9B1C1C; font-weight:700" if v == "Suspeito"
+            else "background-color:#E7F6EC; color:#0F5132")
+st.dataframe(tab3.style.format(precision=3).map(_hl, subset=["Situação"]),
+             use_container_width=True, height=360)
+
+if n_comb:
+    with st.expander(f"🔎 Ver só os {n_comb} suspeito(s)"):
+        st.dataframe(tab3[tab3["Situação"] == "Suspeito"].style.format(precision=3),
+                     use_container_width=True)
+
+if tem_ref:
+    with st.expander("🔀 Matriz de transição (R1 → R2)"):
+        st.caption("Quantas amostras foram de cada interpretação em R1 (linhas) para "
+                   "cada interpretação em R2 (colunas). A diagonal são as que não mudaram.")
+        st.dataframe(pd.crosstab(base["Interp_R1"], base["Interp_R2"],
+                                 rownames=["R1"], colnames=["R2"]),
+                     use_container_width=True)
+
+# ---- Bloco 4: gráficos de apoio (deriva e concordância) ------------------- #
+st.markdown("### 4 · Gráficos de apoio (deriva e concordância)")
 md = resumo["vies_medio"]
 sd = base["Diferenca"].std(ddof=1)
 g1, g2 = st.columns(2)
@@ -738,93 +871,10 @@ longo do tempo/corrida**.
 """
     )
 
-# ---- Bloco 4: mudança de interpretação ------------------------------------ #
-st.markdown("### 4 · Mudança de interpretação entre R1 e R2")
-st.caption(
-    "Informe **um** intervalo de referência ou limite de decisão médica. Cada resultado "
-    "é classificado em Baixo / Normal / Alto e a amostra é marcada como **suspeita** "
-    "quando a interpretação muda de R1 para R2 (troca que alteraria a conduta clínica)."
-)
-
-ci1, ci2 = st.columns(2)
-with ci1:
-    txt_inf = st.text_input("Limite inferior do normal (deixe vazio se não usar)", value="")
-with ci2:
-    txt_sup = st.text_input("Limite superior do normal (deixe vazio se não usar)", value="")
-lim_inf, lim_sup = parse_limite(txt_inf), parse_limite(txt_sup)
-
-if lim_inf is None and lim_sup is None:
-    st.info("Informe pelo menos um dos limites (inferior e/ou superior) para rodar esta análise.")
-elif lim_inf is not None and lim_sup is not None and lim_inf > lim_sup:
-    st.warning("O limite inferior é maior que o superior. Verifique os valores.")
-else:
-    faixa_txt = (f"{lim_inf if lim_inf is not None else '−∞'} a "
-                 f"{lim_sup if lim_sup is not None else '+∞'}")
-    st.caption(f"Faixa normal considerada: **{faixa_txt}** (limites inclusivos).")
-
-    base["Interp_R1"] = base["R1"].apply(lambda v: classificar_ref(v, lim_inf, lim_sup))
-    base["Interp_R2"] = base["R2"].apply(lambda v: classificar_ref(v, lim_inf, lim_sup))
-    base["Mudou_interp"] = base["Interp_R1"] != base["Interp_R2"]
-    # Situação combinada: suspeito se falhar o erro total OU mudar a interpretação
-    base["Situacao"] = np.where(base["Suspeito_erro"] | base["Mudou_interp"], "Suspeito", "OK")
-
-    def _motivo(row):
-        e, m = row["Suspeito_erro"], row["Mudou_interp"]
-        if e and m:
-            return "Erro total + Mudança de interpretação"
-        if e:
-            return "Erro total"
-        if m:
-            return "Mudança de interpretação"
-        return "—"
-    base["Motivo"] = base.apply(_motivo, axis=1)
-
-    n_mudou = int(base["Mudou_interp"].sum())
-    n_erro = int(base["Suspeito_erro"].sum())
-    n_comb = int((base["Situacao"] == "Suspeito").sum())
-
-    cA, cB, cC = st.columns(3)
-    cA.metric("Mudança de interpretação", f"{n_mudou}")
-    cB.metric("Suspeitos pelo erro total", f"{n_erro}")
-    cC.metric("Suspeitos (combinado)", f"{n_comb}",
-              help=f"Erro total |(R1−R2)/R1| > {lim_eta:.1f}% OU mudança de interpretação "
-                   "entre R1 e R2.")
-
-    if n_comb:
-        st.error(f"⚠️ {n_comb} amostra(s) suspeita(s) por pelo menos um critério "
-                 "(erro total e/ou mudança de interpretação). Veja a coluna **Situação**.")
-    else:
-        st.success("Nenhuma amostra suspeita pelos critérios combinados.")
-
-    # Tabela consolidada com a coluna Situação (OK/Suspeito) e o motivo
-    tab4 = base.rename(columns={
-        "ID": "Código de barras", "Interp_R1": "Interpretação R1",
-        "Interp_R2": "Interpretação R2", "ETA_abs_%": "|(R1−R2)/R1| %",
-        "Situacao": "Situação",
-    })[["Código de barras", "R1", "R2", "Interpretação R1", "Interpretação R2",
-        "|(R1−R2)/R1| %", "Motivo", "Situação"]]
-
-    def _hl(v):
-        return ("background-color:#FFE3E3; color:#9B1C1C; font-weight:700" if v == "Suspeito"
-                else "background-color:#E7F6EC; color:#0F5132")
-    st.dataframe(tab4.style.format(precision=3).map(_hl, subset=["Situação"]),
-                 use_container_width=True, height=320)
-
-    if n_comb:
-        with st.expander(f"🔎 Ver só os {n_comb} suspeito(s) (combinado)"):
-            st.dataframe(tab4[tab4["Situação"] == "Suspeito"].style.format(precision=3),
-                         use_container_width=True)
-
-    with st.expander("🔀 Matriz de transição (R1 → R2)"):
-        st.caption("Quantas amostras foram de cada interpretação em R1 (linhas) para "
-                   "cada interpretação em R2 (colunas). A diagonal são as que não mudaram.")
-        st.dataframe(pd.crosstab(base["Interp_R1"], base["Interp_R2"],
-                                 rownames=["R1"], colnames=["R2"]),
-                     use_container_width=True)
-
 # ---- Bloco 5: exportar ---------------------------------------------------- #
 st.markdown("### 5 · Exportar resultados")
-export = base.rename(columns={"ID": "Codigo_de_barras"}).copy()
+export = (base.drop(columns=["_lo", "_hi"], errors="ignore")
+              .rename(columns={"ID": "Codigo_de_barras"}).copy())
 d1, d2 = st.columns(2)
 with d1:
     st.download_button("⬇️ Baixar tabela (Excel)", data=to_excel(export),
