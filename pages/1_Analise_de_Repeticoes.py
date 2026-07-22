@@ -280,7 +280,7 @@ def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
                       col_id: str | None = None, datahora=None, extras=None, z: float = 1.96):
     """
     Recebe o DataFrame e devolve:
-      - tabela por par (ID, R1, R2, média, diferença, erro relativo %, RPD %, DataHora)
+      - tabela por par (ID, R1, R2, média, diferença, erro relativo %, DataHora)
       - dicionário com as métricas agregadas.
     A coluna ``ID`` guarda o código de barras (ou o nº da linha, se não informado).
     """
@@ -317,10 +317,6 @@ def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
                                 base["DP_par"] / base["Media_par"] * 100, np.nan)
     # Erro total analítico (fórmula do usuário): (R1 - R2) / R1  em %
     base["ETA_%"] = base["Diferenca"] / base["R1"] * 100
-    base["ETA_abs_%"] = base["ETA_%"].abs()
-    # RPD simétrico (referência = média do par), para comparação
-    base["RPD_%"] = np.where(base["Media_par"] != 0,
-                             base["Dif_abs"] / base["Media_par"] * 100, np.nan)
 
     d = base["Diferenca"].to_numpy()
     media_global = float(base["Media_par"].mean()) if n_validos else np.nan
@@ -343,7 +339,6 @@ def calcular_metricas(df: pd.DataFrame, col_r1: str, col_r2: str,
         "vies_medio_pct": vies_medio_pct,
         "erro_aleatorio": erro_aleatorio,
         "eta_medio_pct": float(base["ETA_%"].mean()) if n_validos else np.nan,
-        "eta_medio_abs_pct": float(base["ETA_abs_%"].mean()) if n_validos else np.nan,
         "eta_westgard": eta_westgard,
         "z": z,
     }
@@ -604,7 +599,7 @@ else:
             _sex1 = st.selectbox("Sexo do paciente (opcional)", opc1, index=0, key="sex1b")
             sex1 = None if _sex1 == "(nenhuma)" else _sex1
         with a11:
-            _uv1 = st.selectbox("Usuário de validação do 1º Resultado (opcional)", opc1, index=0, key="valid1b")
+            _uv1 = st.selectbox("Usuário de validação do R1 (opcional)", opc1, index=0, key="valid1b")
             valid1 = None if _uv1 == "(nenhuma)" else _uv1
 
         st.markdown("**Relatório da repetição (R2)**")
@@ -629,7 +624,7 @@ else:
 
     extras1_map = {}
     for _nm, _cl in [("Equip. R1", eq1), ("R1 anterior", ra1), ("Idade", ida1),
-                     ("Sexo", sex1), ("RefRange", ref1), ("Usuário validação do 1º Resultado", valid1)]:
+                     ("Sexo", sex1), ("RefRange", ref1), ("Usuário validação R1", valid1)]:
         if _cl:
             extras1_map[_nm] = _cl
     extras2_map = {"Equip. R2": eq2} if eq2 else {}
@@ -673,7 +668,7 @@ else:
     col_idade = "Idade" if "Idade" in matched.columns else None
     col_sexo = "Sexo" if "Sexo" in matched.columns else None
     col_ref = "RefRange" if "RefRange" in matched.columns else None
-    col_valid1 = "Usuário validação do 1º Resultado" if "Usuário validação do 1º Resultado" in matched.columns else None
+    col_valid1 = "Usuário validação R1" if "Usuário validação R1" in matched.columns else None
 
 # ---- Filtro opcional por analito/teste ------------------------------------ #
 df_uso = df
@@ -693,7 +688,7 @@ if col_hora and col_hora in df_uso.columns:
 for _nome, _col in [("Equip. R1", col_equip1), ("Equip. R2", col_equip2),
                     ("R1 anterior", col_r1ant), ("Idade", col_idade),
                     ("Sexo", col_sexo), ("RefRange", col_ref),
-                    ("Usuário validação do 1º Resultado", col_valid1)]:
+                    ("Usuário validação R1", col_valid1)]:
     if _col and _col in df_uso.columns:
         extras[_nome] = df_uso[_col].values
 
@@ -732,7 +727,7 @@ lim_eta = st.number_input(
          "sinalizados como suspeitos. Defina conforme a especificação do analito "
          "(variação biológica, CLIA, RDC).",
 )
-base["Suspeito_erro"] = base["ETA_abs_%"] > lim_eta
+base["Suspeito_erro"] = base["ETA_%"].abs() > lim_eta
 
 # --- Critério 2: intervalo de referência / limite de decisão médica ---
 st.markdown("**Intervalo de referência / limite de decisão médica**")
@@ -819,15 +814,15 @@ else:
 # --- Tabela consolidada (com as colunas adicionais informadas) ---
 tab3 = base.rename(columns={
     "ID": "Código de barras", "Interp_R1": "Interpretação R1",
-    "Interp_R2": "Interpretação R2", "ETA_abs_%": "|(R1−R2)/R1| %",
+    "Interp_R2": "Interpretação R2", "ETA_%": "(R1−R2)/R1 %",
     "Situacao": "Situação",
 })
 cols_extra = [c for c in ["Data R1", "Hora R1", "Equip. R1", "Equip. R2",
-                          "R1 anterior", "Idade", "Sexo", "Usuário validação do 1º Resultado"]
+                          "R1 anterior", "Idade", "Sexo", "Usuário validação R1"]
               if c in tab3.columns]
 cols_interp = ["Interpretação R1", "Interpretação R2"] if tem_ref else []
 col_ordem = (["Código de barras"] + cols_extra + ["R1", "R2"] + cols_interp
-             + ["|(R1−R2)/R1| %", "Motivo", "Situação"])
+             + ["(R1−R2)/R1 %", "Motivo", "Situação"])
 tab3 = tab3[col_ordem]
 
 def _hl(v):
@@ -955,20 +950,20 @@ st.markdown("### 5 · Exportar resultados")
 # Monta o relatório de saída: remove colunas internas, arredonda, reordena e renomeia.
 export = base.drop(columns=["_lo", "_hi", "DataHora", "Suspeito_erro", "Mudou_interp"],
                    errors="ignore").copy()
-cols_2dec = [c for c in ["DP_par", "CV_par_%", "ETA_%", "ETA_abs_%", "RPD_%"]
+cols_2dec = [c for c in ["DP_par", "CV_par_%", "ETA_%"]
              if c in export.columns]
 for _c in cols_2dec:
     export[_c] = pd.to_numeric(export[_c], errors="coerce").round(2)
 # Ordem desejada (nomes internos); o restante segue na ordem atual.
 _lead = [c for c in ["ID", "Idade", "Sexo", "R1", "R2", "R1 anterior", "Data R1",
                      "Hora R1", "Equip. R1", "Equip. R2", "RefRange",
-                     "Usuário validação do 1º Resultado"] if c in export.columns]
+                     "Usuário validação R1"] if c in export.columns]
 _rest = [c for c in export.columns if c not in _lead]
 export = export[_lead + _rest]
 export = export.rename(columns={
     "ID": "Código de barras", "R1": "1º Resultado", "R2": "Repetição",
-    "R1 anterior": "Resultado anterior", "Equip. R1": "Equipamento 1º Resultado",
-    "Equip. R2": "Equipamento Repetição",
+    "R1 anterior": "Resultado anterior", "Equip. R1": "Equipamento R1",
+    "Equip. R2": "Equipamento R2",
 })
 
 d1, d2 = st.columns(2)
