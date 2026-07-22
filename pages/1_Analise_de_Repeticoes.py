@@ -604,7 +604,7 @@ else:
             _sex1 = st.selectbox("Sexo do paciente (opcional)", opc1, index=0, key="sex1b")
             sex1 = None if _sex1 == "(nenhuma)" else _sex1
         with a11:
-            _uv1 = st.selectbox("Usuário de validação do R1 (opcional)", opc1, index=0, key="valid1b")
+            _uv1 = st.selectbox("Usuário de validação do 1º Resultado (opcional)", opc1, index=0, key="valid1b")
             valid1 = None if _uv1 == "(nenhuma)" else _uv1
 
         st.markdown("**Relatório da repetição (R2)**")
