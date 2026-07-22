@@ -403,10 +403,30 @@ def classificar_ref(valor, limite_inf, limite_sup):
 # --------------------------------------------------------------------------- #
 # 5. Exportação
 # --------------------------------------------------------------------------- #
-def to_excel(df: pd.DataFrame) -> bytes:
+def to_excel(df: pd.DataFrame, cols_2dec=None) -> bytes:
+    """
+    Exporta em .xlsx com todo o conteúdo centralizado, largura das colunas
+    ajustada ao conteúdo (autofit) e 2 casas decimais nas colunas indicadas.
+    """
+    from openpyxl.styles import Alignment
+    from openpyxl.utils import get_column_letter
+    cols_2dec = set(cols_2dec or [])
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Repeticoes")
+        ws = writer.sheets["Repeticoes"]
+        centro = Alignment(horizontal="center", vertical="center")
+        n = len(df)
+        for i, col in enumerate(df.columns, start=1):
+            letra = get_column_letter(i)
+            # autofit: largura = maior conteúdo/cabeçalho (limitada a 60)
+            largura = max([len(str(col))] + [len(str(v)) for v in df[col].values])
+            ws.column_dimensions[letra].width = min(largura + 2, 60)
+            for r in range(1, n + 2):                       # centraliza cabeçalho + dados
+                ws.cell(row=r, column=i).alignment = centro
+            if col in cols_2dec:                            # exibe 2 casas decimais
+                for r in range(2, n + 2):
+                    ws.cell(row=r, column=i).number_format = "0.00"
     return output.getvalue()
 
 
@@ -432,7 +452,7 @@ dois_relatorios = modo.startswith("Dois")
 
 # Variáveis que os dois modos preenchem antes da análise:
 col_r1 = col_r2 = col_id = col_analito = col_data = col_hora = None
-col_equip1 = col_equip2 = col_r1ant = col_idade = col_sexo = col_ref = None
+col_equip1 = col_equip2 = col_r1ant = col_idade = col_sexo = col_ref = col_valid1 = None
 df = None
 
 if not dois_relatorios:
@@ -502,6 +522,10 @@ if not dois_relatorios:
         with o6:
             _rf = st.selectbox("Intervalo de referência (ex.: Ref. ranges)", opc, index=0, key="refcol")
             col_ref = None if _rf == "(nenhuma)" else _rf
+        o7, _o8 = st.columns(2)
+        with o7:
+            _uv = st.selectbox("Usuário de validação do 1º resultado", opc, index=0, key="valid1")
+            col_valid1 = None if _uv == "(nenhuma)" else _uv
 
         z_opt = st.selectbox("Nível de confiança (Z)",
                              ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
@@ -575,10 +599,13 @@ else:
         with a9:
             _ida1 = st.selectbox("Idade do paciente (opcional)", opc1, index=0, key="ida1b")
             ida1 = None if _ida1 == "(nenhuma)" else _ida1
-        a10, _a11 = st.columns(2)
+        a10, a11 = st.columns(2)
         with a10:
             _sex1 = st.selectbox("Sexo do paciente (opcional)", opc1, index=0, key="sex1b")
             sex1 = None if _sex1 == "(nenhuma)" else _sex1
+        with a11:
+            _uv1 = st.selectbox("Usuário de validação do R1 (opcional)", opc1, index=0, key="valid1b")
+            valid1 = None if _uv1 == "(nenhuma)" else _uv1
 
         st.markdown("**Relatório da repetição (R2)**")
         b1, b2, b3 = st.columns(3)
@@ -602,7 +629,7 @@ else:
 
     extras1_map = {}
     for _nm, _cl in [("Equip. R1", eq1), ("R1 anterior", ra1), ("Idade", ida1),
-                     ("Sexo", sex1), ("RefRange", ref1)]:
+                     ("Sexo", sex1), ("RefRange", ref1), ("Usuário validação R1", valid1)]:
         if _cl:
             extras1_map[_nm] = _cl
     extras2_map = {"Equip. R2": eq2} if eq2 else {}
@@ -646,6 +673,7 @@ else:
     col_idade = "Idade" if "Idade" in matched.columns else None
     col_sexo = "Sexo" if "Sexo" in matched.columns else None
     col_ref = "RefRange" if "RefRange" in matched.columns else None
+    col_valid1 = "Usuário validação R1" if "Usuário validação R1" in matched.columns else None
 
 # ---- Filtro opcional por analito/teste ------------------------------------ #
 df_uso = df
@@ -664,7 +692,8 @@ if col_hora and col_hora in df_uso.columns:
     extras["Hora R1"] = df_uso[col_hora].astype(str).replace({"NaT": "", "nan": ""}).values
 for _nome, _col in [("Equip. R1", col_equip1), ("Equip. R2", col_equip2),
                     ("R1 anterior", col_r1ant), ("Idade", col_idade),
-                    ("Sexo", col_sexo), ("RefRange", col_ref)]:
+                    ("Sexo", col_sexo), ("RefRange", col_ref),
+                    ("Usuário validação R1", col_valid1)]:
     if _col and _col in df_uso.columns:
         extras[_nome] = df_uso[_col].values
 
@@ -794,7 +823,8 @@ tab3 = base.rename(columns={
     "Situacao": "Situação",
 })
 cols_extra = [c for c in ["Data R1", "Hora R1", "Equip. R1", "Equip. R2",
-                          "R1 anterior", "Idade", "Sexo"] if c in tab3.columns]
+                          "R1 anterior", "Idade", "Sexo", "Usuário validação R1"]
+              if c in tab3.columns]
 cols_interp = ["Interpretação R1", "Interpretação R2"] if tem_ref else []
 col_ordem = (["Código de barras"] + cols_extra + ["R1", "R2"] + cols_interp
              + ["|(R1−R2)/R1| %", "Motivo", "Situação"])
@@ -921,14 +951,35 @@ longo do tempo/corrida**.
 
 # ---- Bloco 5: exportar ---------------------------------------------------- #
 st.markdown("### 5 · Exportar resultados")
-export = (base.drop(columns=["_lo", "_hi"], errors="ignore")
-              .rename(columns={"ID": "Codigo_de_barras"}).copy())
+
+# Monta o relatório de saída: remove colunas internas, arredonda, reordena e renomeia.
+export = base.drop(columns=["_lo", "_hi", "DataHora", "Suspeito_erro", "Mudou_interp"],
+                   errors="ignore").copy()
+cols_2dec = [c for c in ["DP_par", "CV_par_%", "ETA_%", "ETA_abs_%", "RPD_%"]
+             if c in export.columns]
+for _c in cols_2dec:
+    export[_c] = pd.to_numeric(export[_c], errors="coerce").round(2)
+# Ordem desejada (nomes internos); o restante segue na ordem atual.
+_lead = [c for c in ["ID", "Idade", "Sexo", "R1", "R2", "R1 anterior", "Data R1",
+                     "Hora R1", "Equip. R1", "Equip. R2", "RefRange",
+                     "Usuário validação R1"] if c in export.columns]
+_rest = [c for c in export.columns if c not in _lead]
+export = export[_lead + _rest]
+export = export.rename(columns={
+    "ID": "Código de barras", "R1": "1º Resultado", "R2": "Repetição",
+    "R1 anterior": "Resultado anterior", "Equip. R1": "Equipamento R1",
+    "Equip. R2": "Equipamento R2",
+})
+
 d1, d2 = st.columns(2)
 with d1:
-    st.download_button("⬇️ Baixar tabela (Excel)", data=to_excel(export),
+    st.download_button("⬇️ Baixar tabela (Excel)", data=to_excel(export, cols_2dec=cols_2dec),
                        file_name="analise_repeticoes.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 with d2:
     csv_bytes = export.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button("⬇️ Baixar tabela (CSV)", data=csv_bytes,
                        file_name="analise_repeticoes.csv", mime="text/csv")
+st.caption("O **.xlsx** sai com colunas centralizadas e largura ajustada (autofit). O "
+           "**.csv** é texto puro — não guarda largura/alinhamento (isso é do Excel); "
+           "ele leva a mesma ordem, nomes e arredondamento das colunas.")
