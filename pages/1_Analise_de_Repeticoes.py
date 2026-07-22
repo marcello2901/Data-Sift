@@ -472,27 +472,28 @@ if not dois_relatorios:
             _ch = st.selectbox("Coluna de **hora** (opcional)", opc, index=0)
             col_hora = None if _ch == "(nenhuma)" else _ch
 
-        with st.expander("Colunas opcionais (equipamento, resultado anterior, idade, sexo, intervalo de referência)"):
-            o1, o2, o3 = st.columns(3)
-            with o1:
-                _e1 = st.selectbox("Equipamento do R1", opc, index=0, key="equip1")
-                col_equip1 = None if _e1 == "(nenhuma)" else _e1
-            with o2:
-                _e2 = st.selectbox("Equipamento do R2", opc, index=0, key="equip2")
-                col_equip2 = None if _e2 == "(nenhuma)" else _e2
-            with o3:
-                _ra = st.selectbox("Resultado anterior do R1", opc, index=0, key="r1ant")
-                col_r1ant = None if _ra == "(nenhuma)" else _ra
-            o4, o5, o6 = st.columns(3)
-            with o4:
-                _id = st.selectbox("Idade do paciente", opc, index=0, key="idade")
-                col_idade = None if _id == "(nenhuma)" else _id
-            with o5:
-                _sx = st.selectbox("Sexo do paciente", opc, index=0, key="sexo")
-                col_sexo = None if _sx == "(nenhuma)" else _sx
-            with o6:
-                _rf = st.selectbox("Intervalo de referência (Ref. ranges)", opc, index=0, key="refcol")
-                col_ref = None if _rf == "(nenhuma)" else _rf
+        st.markdown("**Colunas opcionais** — aparecem na tabela do Bloco 3; a coluna de "
+                    "intervalo de referência habilita a opção *“usar o do sistema”*.")
+        o1, o2, o3 = st.columns(3)
+        with o1:
+            _e1 = st.selectbox("Equipamento do R1", opc, index=0, key="equip1")
+            col_equip1 = None if _e1 == "(nenhuma)" else _e1
+        with o2:
+            _e2 = st.selectbox("Equipamento do R2", opc, index=0, key="equip2")
+            col_equip2 = None if _e2 == "(nenhuma)" else _e2
+        with o3:
+            _ra = st.selectbox("Resultado anterior do R1", opc, index=0, key="r1ant")
+            col_r1ant = None if _ra == "(nenhuma)" else _ra
+        o4, o5, o6 = st.columns(3)
+        with o4:
+            _id = st.selectbox("Idade do paciente", opc, index=0, key="idade")
+            col_idade = None if _id == "(nenhuma)" else _id
+        with o5:
+            _sx = st.selectbox("Sexo do paciente", opc, index=0, key="sexo")
+            col_sexo = None if _sx == "(nenhuma)" else _sx
+        with o6:
+            _rf = st.selectbox("Intervalo de referência (ex.: Ref. ranges)", opc, index=0, key="refcol")
+            col_ref = None if _rf == "(nenhuma)" else _rf
 
         z_opt = st.selectbox("Nível de confiança (Z)",
                              ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
@@ -663,8 +664,12 @@ base["Suspeito_erro"] = base["ETA_abs_%"] > lim_eta
 
 # --- Critério 2: intervalo de referência / limite de decisão médica ---
 st.markdown("**Intervalo de referência / limite de decisão médica**")
-opcoes_ref = (["Usar o do sistema (coluna da planilha)"] if "RefRange" in base.columns else [])
-opcoes_ref.append("Inserir manualmente")
+if "RefRange" in base.columns:
+    opcoes_ref = [f"Usar o do sistema (coluna: {col_ref})", "Inserir manualmente"]
+else:
+    st.caption("💡 Para preencher automaticamente pelo sistema, selecione a coluna do "
+               "intervalo de referência (ex.: *Ref. ranges*) na **seção 2 › Colunas opcionais**.")
+    opcoes_ref = ["Inserir manualmente"]
 origem_ref = st.radio("De onde vem o intervalo?", opcoes_ref, horizontal=True,
                       label_visibility="collapsed")
 
