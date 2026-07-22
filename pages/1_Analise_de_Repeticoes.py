@@ -629,7 +629,7 @@ else:
 
     extras1_map = {}
     for _nm, _cl in [("Equip. R1", eq1), ("R1 anterior", ra1), ("Idade", ida1),
-                     ("Sexo", sex1), ("RefRange", ref1), ("Usuário validação R1", valid1)]:
+                     ("Sexo", sex1), ("RefRange", ref1), ("Usuário validação do 1º Resultado", valid1)]:
         if _cl:
             extras1_map[_nm] = _cl
     extras2_map = {"Equip. R2": eq2} if eq2 else {}
@@ -673,7 +673,7 @@ else:
     col_idade = "Idade" if "Idade" in matched.columns else None
     col_sexo = "Sexo" if "Sexo" in matched.columns else None
     col_ref = "RefRange" if "RefRange" in matched.columns else None
-    col_valid1 = "Usuário validação R1" if "Usuário validação R1" in matched.columns else None
+    col_valid1 = "Usuário validação do 1º Resultado" if "Usuário validação do 1º Resultado" in matched.columns else None
 
 # ---- Filtro opcional por analito/teste ------------------------------------ #
 df_uso = df
@@ -693,7 +693,7 @@ if col_hora and col_hora in df_uso.columns:
 for _nome, _col in [("Equip. R1", col_equip1), ("Equip. R2", col_equip2),
                     ("R1 anterior", col_r1ant), ("Idade", col_idade),
                     ("Sexo", col_sexo), ("RefRange", col_ref),
-                    ("Usuário validação R1", col_valid1)]:
+                    ("Usuário validação do 1º Resultado", col_valid1)]:
     if _col and _col in df_uso.columns:
         extras[_nome] = df_uso[_col].values
 
@@ -823,7 +823,7 @@ tab3 = base.rename(columns={
     "Situacao": "Situação",
 })
 cols_extra = [c for c in ["Data R1", "Hora R1", "Equip. R1", "Equip. R2",
-                          "R1 anterior", "Idade", "Sexo", "Usuário validação R1"]
+                          "R1 anterior", "Idade", "Sexo", "Usuário validação do 1º Resultado"]
               if c in tab3.columns]
 cols_interp = ["Interpretação R1", "Interpretação R2"] if tem_ref else []
 col_ordem = (["Código de barras"] + cols_extra + ["R1", "R2"] + cols_interp
@@ -962,7 +962,7 @@ for _c in cols_2dec:
 # Ordem desejada (nomes internos); o restante segue na ordem atual.
 _lead = [c for c in ["ID", "Idade", "Sexo", "R1", "R2", "R1 anterior", "Data R1",
                      "Hora R1", "Equip. R1", "Equip. R2", "RefRange",
-                     "Usuário validação R1"] if c in export.columns]
+                     "Usuário validação do 1º Resultado"] if c in export.columns]
 _rest = [c for c in export.columns if c not in _lead]
 export = export[_lead + _rest]
 export = export.rename(columns={
