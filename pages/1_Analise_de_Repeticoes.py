@@ -522,10 +522,6 @@ if not dois_relatorios:
             _uv = st.selectbox("Usuário de validação do 1º resultado", opc, index=0, key="valid1")
             col_valid1 = None if _uv == "(nenhuma)" else _uv
 
-        z_opt = st.selectbox("Nível de confiança (Z)",
-                             ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
-        z = 1.96 if "1,96" in z_opt else 1.65
-
     if col_r1 == col_r2:
         st.warning("R1 e R2 estão apontando para a mesma coluna. Selecione colunas diferentes.")
         st.stop()
@@ -571,25 +567,25 @@ else:
             ts1 = st.selectbox("Teste/exame", cols1,
                                index=_guess_idx(cols1, ["teste", "exame", "analito", "prova"]), key="ts1")
         with a3:
-            res1 = st.selectbox("Resultado → R1", cols1,
+            res1 = st.selectbox("Resultado → R1 (1º Resultado/Resultado suspeito)", cols1,
                                 index=_guess_idx(cols1, ["result", "valor", "dosagem"]), key="res1")
         opc1 = ["(nenhuma)"] + cols1
         a4, a5, a6 = st.columns(3)
         with a4:
-            _d1 = st.selectbox("Data do R1 (opcional)", opc1, index=0, key="data1")
+            _d1 = st.selectbox("Data do 1º Resultado (opcional)", opc1, index=0, key="data1")
             data1 = None if _d1 == "(nenhuma)" else _d1
         with a5:
-            _h1 = st.selectbox("Hora do R1 (opcional)", opc1, index=0, key="hora1")
+            _h1 = st.selectbox("Hora do 1º Resultado (opcional)", opc1, index=0, key="hora1")
             hora1 = None if _h1 == "(nenhuma)" else _h1
         with a6:
             _rf1 = st.selectbox("Intervalo de referência (opcional)", opc1, index=0, key="ref1b")
             ref1 = None if _rf1 == "(nenhuma)" else _rf1
         a7, a8, a9 = st.columns(3)
         with a7:
-            _eq1 = st.selectbox("Equipamento do R1 (opcional)", opc1, index=0, key="eq1b")
+            _eq1 = st.selectbox("Equipamento do 1º Resultado (opcional)", opc1, index=0, key="eq1b")
             eq1 = None if _eq1 == "(nenhuma)" else _eq1
         with a8:
-            _ra1 = st.selectbox("Resultado anterior do R1 (opcional)", opc1, index=0, key="ra1b")
+            _ra1 = st.selectbox("Resultado anterior (opcional)", opc1, index=0, key="ra1b")
             ra1 = None if _ra1 == "(nenhuma)" else _ra1
         with a9:
             _ida1 = st.selectbox("Idade do paciente (opcional)", opc1, index=0, key="ida1b")
@@ -599,7 +595,7 @@ else:
             _sex1 = st.selectbox("Sexo do paciente (opcional)", opc1, index=0, key="sex1b")
             sex1 = None if _sex1 == "(nenhuma)" else _sex1
         with a11:
-            _uv1 = st.selectbox("Usuário de validação do R1 (opcional)", opc1, index=0, key="valid1b")
+            _uv1 = st.selectbox("Usuário de validação do 1º Resultado (opcional)", opc1, index=0, key="valid1b")
             valid1 = None if _uv1 == "(nenhuma)" else _uv1
 
         st.markdown("**Relatório da repetição (R2)**")
@@ -611,16 +607,12 @@ else:
             ts2 = st.selectbox("Teste/exame", cols2,
                                index=_guess_idx(cols2, ["teste", "exame", "analito", "prova"]), key="ts2")
         with b3:
-            res2 = st.selectbox("Resultado → R2", cols2,
+            res2 = st.selectbox("Resultado → R2 (Repetição)", cols2,
                                 index=_guess_idx(cols2, ["result", "valor", "dosagem"]), key="res2")
         b4, _b5 = st.columns(2)
         with b4:
-            _eq2 = st.selectbox("Equipamento do R2 (opcional)", ["(nenhuma)"] + cols2, index=0, key="eq2b")
+            _eq2 = st.selectbox("Equipamento do R2 - Repetição (opcional)", ["(nenhuma)"] + cols2, index=0, key="eq2b")
             eq2 = None if _eq2 == "(nenhuma)" else _eq2
-
-        z_opt = st.selectbox("Nível de confiança (Z)",
-                             ["95% bilateral (Z = 1,96)", "95% unilateral (Z = 1,65)"], index=0)
-        z = 1.96 if "1,96" in z_opt else 1.65
 
     extras1_map = {}
     for _nm, _cl in [("Equip. R1", eq1), ("R1 anterior", ra1), ("Idade", ida1),
@@ -695,7 +687,7 @@ for _nome, _col in [("Equip. R1", col_equip1), ("Equip. R2", col_equip2),
 # ---- Cálculo -------------------------------------------------------------- #
 datahora = montar_datahora(df_uso, col_data, col_hora)
 base, resumo = calcular_metricas(df_uso, col_r1, col_r2, col_id=col_id,
-                                 datahora=datahora, extras=extras, z=z)
+                                 datahora=datahora, extras=extras)
 
 if resumo["n_validos"] == 0:
     st.error(
