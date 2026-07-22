@@ -682,7 +682,7 @@ if col_analito and col_analito != "(nenhuma)":
 extras = {}
 if col_data and col_data in df_uso.columns:
     _dd = pd.to_datetime(df_uso[col_data], errors="coerce", dayfirst=True)
-    extras["Data R1"] = _dd.dt.strftime("%d/%m/%Y").fillna("").values
+    extras["Data 1º Resultado"] = _dd.dt.strftime("%d/%m/%Y").fillna("").values
 if col_hora and col_hora in df_uso.columns:
     extras["Hora R1"] = df_uso[col_hora].astype(str).replace({"NaT": "", "nan": ""}).values
 for _nome, _col in [("Equip. R1", col_equip1), ("Equip. R2", col_equip2),
@@ -773,13 +773,13 @@ else:
 
 # --- Classificação e situação combinada ---
 if tem_ref:
-    base["Interp_R1"] = base.apply(lambda r: classificar_ref(r["R1"], r["_lo"], r["_hi"]), axis=1)
-    base["Interp_R2"] = base.apply(lambda r: classificar_ref(r["R2"], r["_lo"], r["_hi"]), axis=1)
-    base["Mudou_interp"] = ((base["Interp_R1"] != base["Interp_R2"])
-                            & (base["Interp_R1"] != "—") & (base["Interp_R2"] != "—"))
+    base[" Interpretação 1º Resultado"] = base.apply(lambda r: classificar_ref(r["R1"], r["_lo"], r["_hi"]), axis=1)
+    base[" Interpretação Repetição"] = base.apply(lambda r: classificar_ref(r["R2"], r["_lo"], r["_hi"]), axis=1)
+    base["Mudou_interp"] = ((base[" Interpretação 1º Resultado"] != base[" Interpretação Repetição"])
+                            & (base[" Interpretação 1º Resultado"] != "—") & (base[" Interpretação Repetição"] != "—"))
 else:
-    base["Interp_R1"] = "—"
-    base["Interp_R2"] = "—"
+    base[" Interpretação 1º Resultado"] = "—"
+    base[" Interpretação Repetição"] = "—"
     base["Mudou_interp"] = False
 
 base["Situacao"] = np.where(base["Suspeito_erro"] | base["Mudou_interp"], "Suspeito", "OK")
@@ -813,11 +813,11 @@ else:
 
 # --- Tabela consolidada (com as colunas adicionais informadas) ---
 tab3 = base.rename(columns={
-    "ID": "Código de barras", "Interp_R1": "Interpretação R1",
-    "Interp_R2": "Interpretação R2", "ETA_%": "(R1−R2)/R1 %",
+    "ID": "Código de barras", " Interpretação 1º Resultado": "Interpretação R1",
+    " Interpretação Repetição": "Interpretação R2", "ETA_%": "(R1−R2)/R1 %",
     "Situacao": "Situação",
 })
-cols_extra = [c for c in ["Data R1", "Hora R1", "Equip. R1", "Equip. R2",
+cols_extra = [c for c in ["Data 1º Resultado", "Hora R1", "Equip. R1", "Equip. R2",
                           "R1 anterior", "Idade", "Sexo", "Usuário validação R1"]
               if c in tab3.columns]
 cols_interp = ["Interpretação R1", "Interpretação R2"] if tem_ref else []
@@ -840,7 +840,7 @@ if tem_ref:
     with st.expander("🔀 Matriz de transição (R1 → R2)"):
         st.caption("Quantas amostras foram de cada interpretação em R1 (linhas) para "
                    "cada interpretação em R2 (colunas). A diagonal são as que não mudaram.")
-        st.dataframe(pd.crosstab(base["Interp_R1"], base["Interp_R2"],
+        st.dataframe(pd.crosstab(base[" Interpretação 1º Resultado"], base[" Interpretação Repetição"],
                                  rownames=["R1"], colnames=["R2"]),
                      use_container_width=True)
 
@@ -955,15 +955,15 @@ cols_2dec = [c for c in ["DP_par", "CV_par_%", "ETA_%"]
 for _c in cols_2dec:
     export[_c] = pd.to_numeric(export[_c], errors="coerce").round(2)
 # Ordem desejada (nomes internos); o restante segue na ordem atual.
-_lead = [c for c in ["ID", "Idade", "Sexo", "R1", "R2", "R1 anterior", "Data R1",
+_lead = [c for c in ["ID", "Idade", "Sexo", "R1", "R2", "R1 anterior", "Data 1º Resultado",
                      "Hora R1", "Equip. R1", "Equip. R2", "RefRange",
                      "Usuário validação R1"] if c in export.columns]
 _rest = [c for c in export.columns if c not in _lead]
 export = export[_lead + _rest]
 export = export.rename(columns={
     "ID": "Código de barras", "R1": "1º Resultado", "R2": "Repetição",
-    "R1 anterior": "Resultado anterior", "Equip. R1": "Equipamento R1",
-    "Equip. R2": "Equipamento R2",
+    "R1 anterior": "Resultado anterior", "Equip. R1": "Equipamento 1º Resultado",
+    "Equip. R2": "Equipamento Repetição",
 })
 
 d1, d2 = st.columns(2)
