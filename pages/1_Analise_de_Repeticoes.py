@@ -63,6 +63,33 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# --------------------------------------------------------------------------- #
+# Conformidade LGPD / GDPR — o usuário precisa marcar a checkbox antes de usar.
+# Replicado da tela inicial do app.py ("Terms of Use and Data Protection...").
+# Usa a mesma chave de sessão (lgpd_accepted): aceitar uma vez vale para o app.
+# --------------------------------------------------------------------------- #
+GDPR_TERMS = """
+This tool is designed to process and filter data from spreadsheets. The files you upload may contain sensitive personal data (such as full name, date of birth, national ID numbers, health information, etc.), the processing of which is regulated by data protection laws like the General Data Protection Regulation (GDPR or LGPD).
+
+It is your sole responsibility to ensure that all data used in this tool complies with applicable data protection regulations. We strongly recommend that you only use previously anonymized data to protect the privacy of data subjects.
+
+The responsibility for the nature of the processed data is exclusively yours.
+
+To proceed, you must confirm that the data to be used has been properly handled and anonymized.
+"""
+
+if "lgpd_accepted" not in st.session_state:
+    st.session_state.lgpd_accepted = False
+
+if not st.session_state.lgpd_accepted:
+    st.header("Terms of Use and Data Protection Compliance")
+    st.markdown(GDPR_TERMS)
+    accepted = st.checkbox("By checking this box, I confirm that the data provided is anonymized.")
+    if st.button("Continue", type="primary", disabled=not accepted):
+        st.session_state.lgpd_accepted = True
+        st.rerun()
+    st.stop()
+
 
 # --------------------------------------------------------------------------- #
 # 1. Normalização numérica (decimais com "," ou ".", milhar, unidades, etc.)
