@@ -234,7 +234,7 @@ def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi):
     if len(val) < 3:
         return None, len(val)
 
-    val["Erro total %"] = (val["R1"] - val["R2"]) / val["R1"] * 100
+    val["Erro total %"] = np.abs((val["R1"] / val["R2"]) - 1) * 100
     val["Excede ETM"] = val["Erro total %"].abs() > etm if etm is not None else False
     val["Interpretação R1"] = val["R1"].apply(lambda v: classificar_ref(v, lo, hi))
     val["Interpretação R2"] = val["R2"].apply(lambda v: classificar_ref(v, lo, hi))
