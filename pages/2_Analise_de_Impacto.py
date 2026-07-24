@@ -184,16 +184,16 @@ def _ler_tabela(conteudo: bytes, nome: str) -> pd.DataFrame:
 def carregar_base(conteudo: bytes | None, nome: str | None) -> pd.DataFrame | None:
     """
     Carrega a base de testes. Prioridade: arquivo enviado pelo usuário >
-    base_dados_testes.csv na raiz do projeto. Devolve None se nada existir.
+    Base de Dados.csv na raiz do projeto. Devolve None se nada existir.
     """
     df = None
     if conteudo is not None:
         df = _ler_tabela(conteudo, nome)
     else:
-        caminho = os.path.join(APP_DIR, "base_dados_testes.csv")
+        caminho = os.path.join(APP_DIR, "Base de Dados.csv")
         if os.path.exists(caminho):
             with open(caminho, "rb") as fh:
-                df = _ler_tabela(fh.read(), "base_dados_testes.csv")
+                df = _ler_tabela(fh.read(), "Base de Dados.csv")
     if df is None:
         return None
     df.columns = [str(c).strip() for c in df.columns]
@@ -261,7 +261,7 @@ st.caption(
 with st.container(border=True):
     st.markdown("### 1 · Base de dados de testes")
     st.caption("Colunas esperadas: **Teste**, **Equipamento**, **ETM**, **IR**. "
-               "Se você não enviar um arquivo, uso o `base_dados_testes.csv` do projeto.")
+               "Se você não enviar um arquivo, uso o `Base de Dados.csv` do projeto.")
     arq_base = st.file_uploader("Base de dados (opcional se já houver no projeto)",
                                 type=["csv", "xlsx", "xls"], key="base_uploader")
 
@@ -270,7 +270,7 @@ base = carregar_base(arq_base.getvalue() if arq_base is not None else None,
 
 if base is None or base.empty:
     st.info("📄 Envie a base de dados (colunas Teste, Equipamento, ETM, IR) ou inclua "
-            "o arquivo `base_dados_testes.csv` na raiz do projeto para começar.")
+            "o arquivo `Base de Dados.csv` na raiz do projeto para começar.")
     st.stop()
 
 faltando = [c for c in ["Teste", "Equipamento", "ETM", "IR"] if c not in base.columns]
