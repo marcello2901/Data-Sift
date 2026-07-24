@@ -3,12 +3,14 @@
 Análise de Impacto dos Resultados — DataSift
 ============================================
 
-Avalia o impacto de repetir um conjunto de amostras (no mínimo 3) de um mesmo
-teste/equipamento. Para cada amostra o usuário informa o código de barras, o
-Resultado 1 e o Resultado 2; a ferramenta usa o Erro Total Máximo (ETM) e o
-Intervalo de Referência (IR) — puxados automaticamente da base de dados a partir
-do nome do teste — para decidir se a diferença entre os dois resultados tem
-impacto analítico (excede o ETM) e/ou clínico (muda a interpretação).
+Avalia o impacto de repetir conjuntos de amostras (no mínimo 3 por teste). Cada
+teste é um bloco com o seu Erro Total Máximo (ETM) e o seu Intervalo de
+Referência (IR) — puxados automaticamente da base de dados pelo nome do teste —
+e a sua própria tabela de amostras (código de barras, Resultado 1, Resultado 2).
+É possível analisar vários testes ao mesmo tempo.
+
+Para cada amostra decide se a diferença entre os dois resultados tem impacto
+analítico (excede o ETM) e/ou clínico (muda a interpretação pelo IR).
 
 Base de dados (colunas): Teste, Equipamento, ETM, IR.
 
@@ -221,14 +223,38 @@ def to_excel(df: pd.DataFrame, cols_2dec=None) -> bytes:
     return output.getvalue()
 
 
+def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi):
+    """Valida e avalia as amostras de um teste. Devolve (df_resultado, n_validas)."""
+    am = entrada.copy()
+    am["Código de barras"] = am["Código de barras"].astype(str).str.strip()
+    am["R1"] = normalizar_serie_numerica(am["Resultado 1"])
+    am["R2"] = normalizar_serie_numerica(am["Resultado 2"])
+    val = am[(am["Código de barras"] != "") & (am["Código de barras"].str.lower() != "nan")
+             & am["R1"].notna() & am["R2"].notna() & (am["R1"] != 0)].reset_index(drop=True)
+    if len(val) < 3:
+        return None, len(val)
+
+    val["Erro total %"] = (val["R1"] - val["R2"]) / val["R1"] * 100
+    val["Excede ETM"] = val["Erro total %"].abs() > etm if etm is not None else False
+    val["Interpretação R1"] = val["R1"].apply(lambda v: classificar_ref(v, lo, hi))
+    val["Interpretação R2"] = val["R2"].apply(lambda v: classificar_ref(v, lo, hi))
+    val["Mudou interpretação"] = ((val["Interpretação R1"] != val["Interpretação R2"])
+                                  & (val["Interpretação R1"] != "—") & (val["Interpretação R2"] != "—"))
+    val["Impacto"] = np.where(val["Excede ETM"] | val["Mudou interpretação"], "Com impacto", "Sem impacto")
+    val.insert(0, "Teste", teste)
+    val.insert(1, "ETM (%)", etm)
+    val.insert(2, "IR", ir_txt)
+    return val, len(val)
+
+
 # =========================================================================== #
 #                                INTERFACE
 # =========================================================================== #
 st.markdown("## 🎯 Análise de Impacto dos Resultados")
 st.caption(
-    "Avalia o impacto de repetir um conjunto de amostras (mínimo 3) de um mesmo "
-    "teste/equipamento. O Erro Total Máximo (ETM) e o Intervalo de Referência (IR) "
-    "são puxados automaticamente da base de dados pelo nome do teste."
+    "Avalia o impacto de repetir amostras (mínimo 3 por teste) — em um ou vários testes ao "
+    "mesmo tempo. O Erro Total Máximo (ETM) e o Intervalo de Referência (IR) são puxados "
+    "automaticamente da base de dados pelo nome do teste."
 )
 
 # ---- 1 · Base de dados ---------------------------------------------------- #
@@ -253,129 +279,148 @@ if faltando:
              f"Colunas encontradas: {', '.join(map(str, base.columns))}.")
     st.stop()
 
-# Normaliza ETM para número (aceita vírgula / '%')
 base = base.copy()
 base["_ETM_num"] = normalizar_serie_numerica(base["ETM"])
+testes = sorted(base["Teste"].dropna().astype(str).str.strip().unique().tolist())
+equipamentos = sorted(base["Equipamento"].dropna().astype(str).str.strip().unique().tolist())
 
-# ---- 2 · Seleção do teste e equipamento ----------------------------------- #
-with st.container(border=True):
-    st.markdown("### 2 · Teste e equipamento")
-    testes = sorted(base["Teste"].dropna().astype(str).str.strip().unique().tolist())
-    equipamentos = sorted(base["Equipamento"].dropna().astype(str).str.strip().unique().tolist())
 
-    s1, s2 = st.columns(2)
-    with s1:
-        teste_sel = st.selectbox("Nome do teste", testes, index=0 if testes else None)
-    with s2:
-        equip_sel = st.selectbox("Equipamento", equipamentos, index=0 if equipamentos else None)
-
-    # ETM e IR puxados automaticamente pelo nome do teste (1ª linha correspondente)
-    linha = base[base["Teste"].astype(str).str.strip() == str(teste_sel)]
+def lookup_teste(teste):
+    """Devolve (etm, ir_txt, lo, hi) da base para o teste (1ª linha correspondente)."""
+    linha = base[base["Teste"].astype(str).str.strip() == str(teste)]
     etm = float(linha["_ETM_num"].dropna().iloc[0]) if not linha["_ETM_num"].dropna().empty else None
     ir_txt = str(linha["IR"].dropna().iloc[0]) if not linha["IR"].dropna().empty else ""
-    lo_ir, hi_ir = parse_ref_range(ir_txt)
+    lo, hi = parse_ref_range(ir_txt)
+    return etm, ir_txt, lo, hi
 
-    a1, a2 = st.columns(2)
-    with a1:
-        st.metric("Erro Total Máximo (ETM)", f"{etm:.2f} %" if etm is not None else "—")
-    with a2:
-        st.metric("Intervalo de Referência (IR)", ir_txt if ir_txt else "—")
 
-    if etm is None:
-        st.warning("Este teste não tem ETM numérico na base — o critério de erro total ficará indisponível.")
-    if lo_ir is None and hi_ir is None:
-        st.warning("Este teste não tem IR interpretável na base — o critério de mudança de interpretação ficará indisponível.")
+# Estado dos blocos de teste (um id por bloco)
+if "imp_blocos" not in st.session_state:
+    st.session_state.imp_blocos = [1]
+    st.session_state.imp_next = 2
 
-# ---- 3 · Amostras (mínimo 3) ---------------------------------------------- #
+# ---- 2 · Equipamento e testes --------------------------------------------- #
 with st.container(border=True):
-    st.markdown("### 3 · Amostras (mínimo 3)")
-    st.caption("Informe o código de barras, o Resultado 1 e o Resultado 2 de cada amostra. "
-               "Use o botão ➕ da tabela para adicionar mais linhas (aceita vírgula ou ponto).")
-    seed = pd.DataFrame({"Código de barras": ["", "", ""],
-                         "Resultado 1": ["", "", ""],
-                         "Resultado 2": ["", "", ""]})
-    entrada = st.data_editor(
-        seed, num_rows="dynamic", use_container_width=True, key="amostras_editor",
-        column_config={
-            "Código de barras": st.column_config.TextColumn("Código de barras"),
-            "Resultado 1": st.column_config.TextColumn("Resultado 1"),
-            "Resultado 2": st.column_config.TextColumn("Resultado 2"),
-        },
-    )
+    st.markdown("### 2 · Equipamento e testes")
+    equip_sel = st.selectbox("Equipamento (vale para todos os testes abaixo)",
+                             equipamentos, index=0 if equipamentos else None)
+    st.caption("Cada bloco abaixo é um **teste**, com o seu ETM e IR puxados da base e a sua "
+               "própria tabela de amostras (mínimo 3). Use o ➕ da tabela para mais linhas e o "
+               "botão **Adicionar teste** para mais testes.")
 
-# ---- Cálculo -------------------------------------------------------------- #
-am = entrada.copy()
-am["Código de barras"] = am["Código de barras"].astype(str).str.strip()
-am["R1"] = normalizar_serie_numerica(am["Resultado 1"])
-am["R2"] = normalizar_serie_numerica(am["Resultado 2"])
-val = am[(am["Código de barras"] != "") & (am["Código de barras"].str.lower() != "nan")
-         & am["R1"].notna() & am["R2"].notna() & (am["R1"] != 0)].reset_index(drop=True)
+blocos_dados = []   # (teste, etm, ir_txt, lo, hi, entrada_df)
+for bid in list(st.session_state.imp_blocos):
+    with st.container(border=True):
+        top = st.columns([5, 1])
+        with top[0]:
+            teste_sel = st.selectbox("Nome do teste", testes,
+                                     index=0 if testes else None, key=f"teste_{bid}")
+        with top[1]:
+            st.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+            if len(st.session_state.imp_blocos) > 1 and st.button("🗑️ Remover", key=f"del_{bid}"):
+                st.session_state.imp_blocos.remove(bid)
+                st.rerun()
 
-if len(val) < 3:
-    st.info(f"ℹ️ Informe **no mínimo 3 amostras** válidas (código de barras + Resultado 1 e 2 "
-            f"numéricos, R1 ≠ 0). No momento há {len(val)}.")
+        etm, ir_txt, lo, hi = lookup_teste(teste_sel)
+        cE = st.columns(2)
+        cE[0].metric("Erro Total Máximo (ETM)", f"{etm:.2f} %" if etm is not None else "—")
+        cE[1].metric("Intervalo de Referência (IR)", ir_txt if ir_txt else "—")
+
+        seed = pd.DataFrame({"Código de barras": ["", "", ""],
+                             "Resultado 1": ["", "", ""],
+                             "Resultado 2": ["", "", ""]})
+        entrada = st.data_editor(
+            seed, num_rows="dynamic", use_container_width=True, key=f"am_{bid}",
+            column_config={
+                "Código de barras": st.column_config.TextColumn("Código de barras"),
+                "Resultado 1": st.column_config.TextColumn("Resultado 1"),
+                "Resultado 2": st.column_config.TextColumn("Resultado 2"),
+            },
+        )
+        blocos_dados.append((teste_sel, etm, ir_txt, lo, hi, entrada))
+
+if st.button("➕ Adicionar teste"):
+    st.session_state.imp_blocos.append(st.session_state.imp_next)
+    st.session_state.imp_next += 1
+    st.rerun()
+
+# ---- Cálculo (todos os blocos) -------------------------------------------- #
+partes, avisos = [], []
+for teste_sel, etm, ir_txt, lo, hi, entrada in blocos_dados:
+    res, q = analisar_bloco(entrada, teste_sel, etm, ir_txt, lo, hi)
+    if res is None:
+        if q > 0:   # bloco vazio não gera aviso; só o parcialmente preenchido (1-2)
+            avisos.append((teste_sel, q))
+    else:
+        partes.append(res)
+
+for teste_sel, q in avisos:
+    st.warning(f"⚠️ **{teste_sel}**: informe no mínimo 3 amostras válidas (há {q}). "
+               "Este teste não entrou na análise.")
+
+if not partes:
+    st.info("ℹ️ Informe pelo menos um teste com **3 amostras válidas** (código de barras + "
+            "Resultado 1 e 2 numéricos, R1 ≠ 0) para ver a análise de impacto.")
     st.stop()
 
-# Critério analítico: erro total (R1-R2)/R1 vs ETM
-val["Erro total %"] = (val["R1"] - val["R2"]) / val["R1"] * 100
-if etm is not None:
-    val["Excede ETM"] = val["Erro total %"].abs() > etm
-else:
-    val["Excede ETM"] = False
+todos = pd.concat(partes, ignore_index=True)
 
-# Critério clínico: mudança de interpretação pelo IR
-val["Interpretação R1"] = val["R1"].apply(lambda v: classificar_ref(v, lo_ir, hi_ir))
-val["Interpretação R2"] = val["R2"].apply(lambda v: classificar_ref(v, lo_ir, hi_ir))
-val["Mudou interpretação"] = ((val["Interpretação R1"] != val["Interpretação R2"])
-                              & (val["Interpretação R1"] != "—") & (val["Interpretação R2"] != "—"))
+# ---- 3 · Resultado da análise --------------------------------------------- #
+st.markdown("### 3 · Resultado da análise de impacto")
+st.caption(f"Equipamento avaliado: **{equip_sel}** · {todos['Teste'].nunique()} teste(s).")
 
-val["Impacto"] = np.where(val["Excede ETM"] | val["Mudou interpretação"], "Com impacto", "Sem impacto")
-val.insert(0, "Teste", teste_sel)
-val.insert(1, "Equipamento", equip_sel)
-
-# ---- 4 · Resultado da análise --------------------------------------------- #
-st.markdown("### 4 · Resultado da análise de impacto")
-n = len(val)
-n_etm = int(val["Excede ETM"].sum())
-n_interp = int(val["Mudou interpretação"].sum())
-n_impacto = int((val["Impacto"] == "Com impacto").sum())
+n = len(todos)
+n_etm = int(todos["Excede ETM"].sum())
+n_interp = int(todos["Mudou interpretação"].sum())
+n_impacto = int((todos["Impacto"] == "Com impacto").sum())
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Amostras analisadas", f"{n}")
-m2.metric("Excedem o ETM", f"{n_etm}", help=f"|(R1−R2)/R1| acima de {etm:.2f}%." if etm is not None else "ETM indisponível.")
-m3.metric("Mudam de interpretação", f"{n_interp}", help=f"Cruzam o IR {ir_txt}." if ir_txt else "IR indisponível.")
+m2.metric("Excedem o ETM", f"{n_etm}")
+m3.metric("Mudam de interpretação", f"{n_interp}")
 m4.metric("Com impacto (combinado)", f"{n_impacto}")
 
 if n_impacto:
-    st.error(f"⚠️ {n_impacto} de {n} amostra(s) **com impacto** (excedem o ETM e/ou mudam de "
-             f"interpretação). Avalie o equipamento/reagente **{equip_sel}** para o teste "
-             f"**{teste_sel}** antes de liberar.")
+    st.error(f"⚠️ {n_impacto} de {n} amostra(s) **com impacto** no equipamento **{equip_sel}** "
+             "(excedem o ETM e/ou mudam de interpretação). Avalie antes de liberar.")
 else:
-    st.success(f"✅ Nenhuma das {n} amostras apresentou impacto para **{teste_sel}** "
-               f"em **{equip_sel}**.")
+    st.success(f"✅ Nenhuma das {n} amostras apresentou impacto em **{equip_sel}**.")
 
-# Tabela por amostra (destaca as com impacto)
-tab = val.rename(columns={"Código de barras": "Código de barras"})[
-    ["Código de barras", "R1", "R2", "Erro total %", "Excede ETM",
-     "Interpretação R1", "Interpretação R2", "Mudou interpretação", "Impacto"]
-].rename(columns={"R1": "Resultado 1", "R2": "Resultado 2"})
+# Resumo por teste
+resumo = (todos.assign(_imp=(todos["Impacto"] == "Com impacto").astype(int),
+                       _etm=todos["Excede ETM"].astype(int),
+                       _int=todos["Mudou interpretação"].astype(int))
+          .groupby("Teste")
+          .agg(Amostras=("Impacto", "size"), Excedem_ETM=("_etm", "sum"),
+               Mudam_interp=("_int", "sum"), Com_impacto=("_imp", "sum"))
+          .reset_index())
+st.markdown("**Resumo por teste**")
+st.dataframe(resumo, use_container_width=True)
+
+# Detalhe por amostra
+tab = todos[["Teste", "Código de barras", "R1", "R2", "Erro total %", "Excede ETM",
+             "Interpretação R1", "Interpretação R2", "Mudou interpretação", "Impacto"]].rename(
+    columns={"R1": "Resultado 1", "R2": "Resultado 2"})
+
 
 def _hl(v):
     return ("background-color:#FFE3E3; color:#9B1C1C; font-weight:700" if v == "Com impacto"
             else "background-color:#E7F6EC; color:#0F5132")
+
+
+st.markdown("**Detalhe por amostra**")
 st.dataframe(tab.style.format({"Erro total %": "{:.2f}", "Resultado 1": "{:.3f}",
                                "Resultado 2": "{:.3f}"}).map(_hl, subset=["Impacto"]),
              use_container_width=True)
 
-# ---- 5 · Exportar --------------------------------------------------------- #
-st.markdown("### 5 · Exportar")
-export = val[["Teste", "Equipamento", "Código de barras", "R1", "R2", "Erro total %",
-              "Excede ETM", "Interpretação R1", "Interpretação R2",
-              "Mudou interpretação", "Impacto"]].rename(
+# ---- 4 · Exportar --------------------------------------------------------- #
+st.markdown("### 4 · Exportar")
+export = todos[["Teste", "ETM (%)", "IR", "Código de barras", "R1", "R2", "Erro total %",
+                "Excede ETM", "Interpretação R1", "Interpretação R2",
+                "Mudou interpretação", "Impacto"]].rename(
     columns={"R1": "Resultado 1", "R2": "Resultado 2"}).copy()
+export.insert(0, "Equipamento", equip_sel)
 export["Erro total %"] = export["Erro total %"].round(2)
-export.insert(3, "ETM (%)", etm)
-export.insert(4, "IR", ir_txt)
 
 d1, d2 = st.columns(2)
 with d1:
