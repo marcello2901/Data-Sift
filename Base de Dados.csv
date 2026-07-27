@@ -3,7 +3,7 @@ Acido Folico;22,00%;11,00%;Soro;Cobas Imuno 1-1-1;folato;AFOL;3,89;26,80;3,89 - 
 Acido Folico;22,00%;11,00%;Soro;Cobas Imuno 3-1-1;folato;AFOL;3,89;26,80;3,89 - 26,8
 Acido Folico;22,00%;11,00%;Soro;Cobas Imuno 4-1-1;folato;AFOL;3,89;26,80;3,89 - 26,8
 Acido urico (Soro);15,00%;7,50%;Soro;BIOQ_1-1-2;acidourico;AUR;3,40;7,00;3,4 - 7
-Acido urico (Urina);19,40%;5,60%;Urina;Atellica CH 930;acidourico;AUR;3,40;7,00;3,4 - 7
+Acido urico (Urina);19,40%;5,60%;Urina;Atellica CH 930;acidourico urinario;AURUIS;15,00;99,00;15 - 99
 ACTH;35,00%;5,00%;Plasma;Immulite 2000 Xpi;acth;ACT;5,00;46,00;5 - 46
 AHIV;15,00%;7,50%;Sangue;Cobas Imuno 2-2-1;ahiv;HIV2;0,00;0,99;0 - 0,99
 Albumina (Bioq);12,00%;6,00%;Soro;BIOQ_1-2-2;albumina;ALB;3,50;5,20;3,5 - 5,2
@@ -20,7 +20,7 @@ Alfa-2  (Cappilarys);20,00%;6,00%;Soro;Cappilarys - 917;alfa2;;;;
 Alfafetoproteina;20,00%;10,00%;Sangue;Cobas Imuno 2-3-1;alfafetoproteina;AFETO;0,00;5,80;0 - 5,8
 AMH Plus;11,40%;3,50%;Sangue;Cobas Imuno 1-4-1;amhplus;AMH;0,01;2,71;0,01 - 2,71
 Amilase (Soro);30,00%;8,00%;Soro;BIOQ_1-2-1;amilase;AMI;28,00;100,00;28 - 100
-Amilase (Urina);19,40%;5,60%;Urina;Atellica CH 930;amilase;AMI;28,00;100,00;28 - 100
+Amilase (Urina);19,40%;5,60%;Urina;Atellica CH 930;amilase urinaria;AMIUR;0,00;650,00;0 - 650
 Amonia;20,00%;10,00%;Soro;Atellica CH 930;amonia;AMONIA;19,00;54,00;19 - 54
 Androstenediona;30,00%;15,00%;Plasma;Cobas Imuno 1-3-1;androstenediona;AND;0,19;1,07;0,19 - 1,07
 Anti-estreptolisina-O (ASO);20,00%;10,00%;Soro;BIOQ_4-2-1;antiestreptolisinaoaso;ASLO;20,00;200,00;20 - 200
@@ -65,7 +65,7 @@ CA 19-9;20,00%;10,00%;Soro;Cobas Imuno 2-3-1;ca199;CA19;0,00;34,00;0 - 34
 CA 50;18,00%;9,00%;Soro;Maglumi 4000;ca50;CA50;0,00;25,00;0 - 25
 CA 72-4;24,00%;12,00%;Sangue;Cobas Imuno_2-3-1;ca724;CA72/4;0,00;6,90;0 - 6,9
 Calcio (Soro);15,00%;7,50%;Soro;BIOQ_1-2-1;calcio;CA;8,20;9,60;8,2 - 9,6
-Calcio (Urina);25,00%;12,50%;Urina;Atellica CH 930;calcio;CA;8,20;9,60;8,2 - 9,6
+Calcio (Urina);25,00%;12,50%;Urina;Atellica CH 930;calcio urinario;CAUIS;100,00;300,00;100 - 300
 Calcio ionico;12,00%;6,00%;Soro;Diestro II;calcioionico;CAI;1,00;1,40;1 - 1,4
 Calcitonina;30,00%;15,00%;Sangue;Cobas Imuno 1-2-1;calcitonina;CALCITON;0,00;14,30;0 - 14,3
 Calprotectina;27,00%;13,50%;Fezes;Liaison XL_203;calprotectina;CALPRO;0,00;50,00;0 - 50
@@ -82,7 +82,7 @@ Chagas;24,00%;12,00%;Sangue;Cobas Imuno_2-1-1;chagas;CHASO;;;
 Cistatina C;15,00%;7,50%;Soro;BN II - 01;cistatinac;CISTATIN;0,62;1,11;0,62 - 1,11
 CKMB;32,00%;16,00%;Soro;BIOQ_1-2-1;ckmb;CKMB;1,00;25,00;1 - 25
 Cloro (Soro);13,00%;6,50%;Soro;ISE_1-1-1;cloro;CL;98,00;107,00;98 - 107
-Cloro (Urina);10,00%;5,00%;Urina;Atellica CH 930;cloro;CL;98,00;107,00;98 - 107
+Cloro (Urina);10,00%;5,00%;Urina;Atellica CH 930;cloro urinario;CLOUI;110,00;250,00;110 - 250
 CMV IgG;23,00%;11,50%;Soro;Cobas Imuno_2-1-1;cmvigg;CMVG-EQ;0,00;500,00;0 - 500
 CMV IgM;15,00%;7,50%;Sangue;Cobas Imuno_2-1-1;cmvigm;CMVM-EQ;0,00;0,70;0 - 0,7
 Cobre;20,00%;10,00%;Soro;"BIOQ_1-1-2	";cobre;COBRE;76,00;152,00;76 - 152
@@ -95,7 +95,7 @@ Cortisol;20,00%;10,00%;Soro;Atellica IM 715;cortisol;CORT8;5,27;22,45;5,27 - 22,
 Cortisol salivar;24,00%;12,00%;Saliva;Cobas Imuno_2-3-1;cortisolsalivar;CSAL8;1,50;20,29;1,5 - 20,29
 CPK;20,00%;10,00%;Soro;BIOQ_1-2-1;cpk;CPK;39,00;308,00;39 - 308
 Creatinina (Soro);20,00%;10,00%;Soro;BIOQ_1-1-2;creatinina;CRE;0,67;1,17;0,67 - 1,17
-Creatinina (Urina);30,00%;15,00%;Urina;Atellica CH 930;creatinina;CRE;0,70;1,20;0,7 - 1,2
+Creatinina (Urina);30,00%;15,00%;Urina;Atellica CH 930;creatinina urinaria;CREUI;0,70;1,20;0,7 - 1,2
 dsDNA;33,00%;16,50%;Sangue;Phadia 2500 A;dsdna;dsDNA;;;
 Elastase;18,00%;9,00%;Fezes;Liaison XL_203;elastase;ELASTASE;0,00;200,00;0 - 200
 Epstein-Barr IgG;24,00%;12,00%;Soro;Cobas Imuno_2-1-1;epsteinbarrigg;EBVG-EQ;0,00;0,10;0 - 0,1
@@ -111,7 +111,7 @@ Ferritina;25,00%;12,50%;Soro;Cobas Imuno 4-1-1;ferritina;FERRI;34,00;500,00;34 -
 Ferro;30,00%;15,00%;Soro;BIOQ_1-1-1;ferro;FE;33,00;193,00;33 - 193
 Fosfatase Alcalina;35,00%;17,50%;Soro;BIOQ_1-1-2;fosfatasealcalina;FAL;40,00;129,00;40 - 129
 Fosforo (Soro);20,00%;10,00%;Soro;BIOQ_1-1-1;fosforo;FOS;2,50;4,50;2,5 - 4,5
-Fosforo (Urina);30,00%;15,00%;Urina;Atellica CH 930;fosforo;FOS;2,50;4,50;2,5 - 4,5
+Fosforo (Urina);30,00%;15,00%;Urina;Atellica CH 930;fosforo urinario;PUI;40,00;150,00;40 - 150
 Frutosamina;25,00%;12,50%;Soro;BIOQ_4-2-2;frutosamina;FRUTOS;205,00;285,00;205 - 285
 FSH;15,00%;7,50%;Soro;Cobas Imuno 1-1-1;fsh;FSH;25,80;134,80;25,8 - 134,8
 FSH;15,00%;7,50%;Soro;Cobas Imuno 3-1-1;fsh;FSH;25,80;134,80;25,8 - 134,8
@@ -124,7 +124,7 @@ Gliadina IgA;30,00%;15,00%;Sangue;Phadia 2500 A;gliadinaiga;;;;
 Gliadina IgG;30,00%;15,00%;Sangue;Phadia 2500 A;gliadinaigg;;;;
 Glicose (Líquor);12,00%;6,00%;Líquor;Atellica CH 930;glicose;GLI;70,00;99,00;70 - 99
 Glicose (Soro);13,00%;6,50%;Soro;BIOQ_1-1-1;glicose;GLI;70,00;99,00;70 - 99
-Glicose (Urina);15,00%;3,80%;Urina;Atellica CH 930;glicose;GLI;70,00;99,00;70 - 99
+Glicose (Urina);15,00%;3,80%;Urina;Atellica CH 930;glicose;GLI;0,00;500,00;0 - 500
 H. Pylori Antigeno;21,00%;10,50%;Fezes;Liaison_1 - 203;hpyloriantigeno;HPFEZES;0,01;0,89;0,01 - 0,89
 Haptoglobina;16,00%;4,00%;Soro;BN II - 01;haptoglobina;HAPTOGLO;30,00;200,00;30 - 200
 Hb C;;;Plasma;D 10;hbc;;;;
@@ -173,7 +173,7 @@ Lipase;25,00%;12,50%;Soro;BIOQ_1-2-2;lipase;LIPA;13,00;60,00;13 - 60
 "Lipoproteina ""A""";30,00%;15,00%;Soro;BIOQ_1_2_2;"lipoproteina""a""";LIPOA;1,00;75,00;1 - 75
 Litio;25,00%;12,50%;Soro;Atellica CH 930;litio;LITIO;0,50;1,20;0,5 - 1,2
 Magnesio (Soro);25,00%;12,50%;Soro;BIOQ_1-1-1;magnesio;MAG;1,70;2,30;1,7 - 2,3
-Magnesio (Urina);30,00%;15,00%;Urina;Atellica CH 930;magnesio;MAG;1,70;2,30;1,7 - 2,3
+Magnesio (Urina);30,00%;15,00%;Urina;Atellica CH 930;magnesio urinario;MAGUI;4,10;13,80;4,1 - 13,8
 Microalbuminuria;20,00%;10,00%;Urina;Atellica CH 930;microalbuminuria;MICROI;0,50;2,50;0,5 - 2,5
 MPO;30,00%;15,00%;Sangue;Phadia 2500 A;mpo;;;;
 Mycoplasma IgG;36,00%;18,00%;Soro;Liaison_1 - 203;mycoplasmaigg;MICOPLAS;0,00;10,00;0 - 10
@@ -186,7 +186,7 @@ Parvovirus IgM;40,00%;20,00%;Soro;Liaison XL_203;parvovirusigm;PARVOM;0,00;0,90;
 PCR Ultra;16,00%;8,00%;Soro;BIOQ_1-1-2;pcrultra;ULTRAPCR;0,15;5,00;0,15 - 5
 Pepitdeo C;13,00%;6,50%;Sangue;Cobas Imuno 1-4-1;pepitdeoc;PEPC;1,10;4,40;1,1 - 4,4
 Potassio (Soro);10,00%;5,00%;Soro;ISE_1-1-1;potassio;K;3,50;5,10;3,5 - 5,1
-Potassio (Urina);10,00%;5,00%;Urina;Atellica CH 930;potassio;K;3,50;5,10;3,5 - 5,1
+Potassio (Urina);10,00%;5,00%;Urina;Atellica CH 930;potassio urinario;KUI;17,00;164,00;17 - 164
 PR3;30,00%;15,00%;Sangue;Phadia 2500;pr3;;;;
 Pre - Albumina;20,00%;3,60%;Soro;BN II - 01;prealbumina;PREALB;20,00;40,00;20 - 40
 Progesterona;14,00%;7,00%;Soro;Cobas Imuno 1-1-1;progesterona;PROG;0,05;15,00;0,05 - 15
@@ -194,7 +194,7 @@ Progesterona;14,00%;7,00%;Soro;Cobas Imuno 3-1-1;progesterona;PROG;0,05;15,00;0,
 Prolactina;13,00%;6,50%;Soro;Atellica IM 715;prolactina;PRL;2,10;17,70;2,1 - 17,7
 Proteina Urinaria;25,00%;12,50%;LÃ­quor;Atellica CH 930;proteina;PRO;;;
 Proteinas Totais (Soro);12,00%;6,00%;Soro;BIOQ_1-1-2;proteinastotais;PROT;6,40;8,30;6,4 - 8,3
-Proteinas Totais (Urina);40,00%;20,00%;Urina;Atellica CH 930;proteinastotais;PROT;6,40;8,30;6,4 - 8,3
+Proteinas Totais (Urina);40,00%;20,00%;Urina;Atellica CH 930;proteina urinaria;PTUI;1,00;15,00;1,0 - 15,0
 PSA Livre;20,00%;10,00%;Soro;Cobas Imuno_2-1-1;psalivre;PSAL;0,01;0,72;0,01 - 0,72
 PSA Total;17,00%;8,50%;Soro;Cobas Imuno_2-1-1;psatotal;PSAT;0,00;0,06;0 - 0,06
 Quantiferon;42,00%;21,00%;Sangue;Liaison XL_1 - 203;quantiferon;NIL;;;
@@ -211,7 +211,7 @@ SHBG;16,00%;8,00%;Soro;Cobas Imuno 3-2-1;shbg;SBG;20,60;76,70;20,6 - 76,7
 SHBG;16,00%;8,00%;Soro;Cobas Imuno 4-2-1;shbg;SBG;20,60;76,70;20,6 - 76,7
 SM;30,00%;15,00%;Sangue;Phadia 2500 A;sm;;;;
 Sodio (Soro);5,00%;2,50%;Soro;ISE_1-1-1;sodio;NA;136,00;145,00;136 - 145
-Sodio (Urina);10,00%;5,00%;Urina;Atellica CH 930;sodio;NA;136,00;145,00;136 - 145
+Sodio (Urina);10,00%;5,00%;Urina;Atellica CH 930;sodio urinario;NAUI;18,00;301,00;18 - 301
 Somatomedina;16,00%;8,00%;Soro;Immulite 2000 Xpi - 3;somatomedina;IGF1SOMA;40,20;225,00;40,2 - 225
 Syphilis;18,60%;9,30%;Sangue;Cobas Imuno 2-2-1;syphilis;VDR_QT;0,00;0,99;0 - 0,99
 T3 Livre;15,00%;7,50%;Soro;Cobas Imuno 1-3-1;t3livre;T3L;2,04;4,40;2,04 - 4,4
@@ -246,7 +246,7 @@ TSH;11,00%;5,50%;Soro;Cobas Imuno 6-1-1;tsh;TSH;0,27;4,20;0,27 - 4,2
 TTG IgA;30,00%;15,00%;Sangue;Phadia 2500 A;ttgiga;IgA;40,00;350,00;40 - 350
 TTG IgG;30,00%;15,00%;Sangue;Phadia 2500 A;ttgigg;IgG;650,00;1600,00;650 - 1600
 Ureia (Soro);18,00%;9,00%;Soro;BIOQ_1-1-1;ureia;URE;16,60;48,50;16,6 - 48,5
-Ureia (Urina);22,10%;7,70%;Urina;Atellica CH 930;ureia;URE;16,60;48,50;16,6 - 48,5
+Ureia (Urina);22,10%;7,70%;Urina;Atellica CH 930;ureia urinaria;URUI;12,00;20,00;12,0 - 20,0
 Varicella IgG;30,00%;15,00%;Soro;Liaison_1 - 203;varicellaigg;HERPZG;0,00;150,00;0 - 150
 Varicella IgM;30,00%;15,00%;Soro;Liaison_1 - 203;varicellaigm;HERPZM;0,00;0,90;0 - 0,9
 Vitamina B12;20,00%;10,00%;Plasma;Cobas Imuno 1-1-1;vitaminab12;VB12;197,00;771,00;197 - 771
