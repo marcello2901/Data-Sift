@@ -284,7 +284,7 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str) -> bytes:
             if c in d.columns:
                 d[c] = d[c].map(lambda v: "Sim" if bool(v) else "Não")
         if "Impacto" in d.columns:
-            d["Impacto"] = d["Impacto"].map(lambda v: _impacto_curto.get(v, v))
+            d["Impacto"] = d["Impacto"].map(lambda v: Impacto.get(v, v))
         return d.astype(str).rename(columns=_rename_pdf)
 
     df = _fmt(detalhe)
