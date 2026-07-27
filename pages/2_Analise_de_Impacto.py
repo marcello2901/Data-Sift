@@ -148,7 +148,7 @@ def classificar_ref(valor, limite_inf, limite_sup):
     return "Normal"
 
 
-_COLS_ESPERADAS = ("Teste", "Equipamento", "ETM", "IR")
+_COLS_ESPERADAS = ("Teste", "ETM", "IR")
 
 
 def _ler_tabela(conteudo: bytes, nome: str) -> pd.DataFrame:
@@ -181,23 +181,51 @@ def _ler_tabela(conteudo: bytes, nome: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner="Lendo base de dados...")
-def carregar_base(conteudo: bytes | None, nome: str | None) -> pd.DataFrame | None:
+def carregar_base():
     """
-    Carrega a base de testes. Prioridade: arquivo enviado pelo usuário >
-    Base de Dados.csv na raiz do projeto. Devolve None se nada existir.
+    Carrega a base de dados da raiz do projeto (``Base de Dados.xlsx`` preferido,
+    senão ``Base de Dados.csv``). Devolve (base_testes, equipamentos):
+      - base_testes: DataFrame com Teste, ETM, IR (aba que contém essas colunas);
+      - equipamentos: lista da aba **Equipamentos** (coluna **Equipamentos**);
+        se não houver essa aba, cai para os valores únicos da coluna Equipamento.
     """
-    df = None
-    if conteudo is not None:
-        df = _ler_tabela(conteudo, nome)
-    else:
-        caminho = os.path.join(APP_DIR, "Base de Dados.csv")
-        if os.path.exists(caminho):
-            with open(caminho, "rb") as fh:
-                df = _ler_tabela(fh.read(), "Base de Dados.csv")
-    if df is None:
-        return None
-    df.columns = [str(c).strip() for c in df.columns]
-    return df
+    xlsx = os.path.join(APP_DIR, "Base de Dados.xlsx")
+    csv = os.path.join(APP_DIR, "Base de Dados.csv")
+    base, equipamentos = None, []
+
+    if os.path.exists(xlsx):
+        try:
+            abas = pd.read_excel(xlsx, sheet_name=None, engine="openpyxl")
+        except Exception:
+            abas = {}
+        for _, d in abas.items():
+            d.columns = [str(c).strip() for c in d.columns]
+        # base de testes: 1ª aba que tenha Teste + ETM + IR (senão a 1ª aba)
+        for _, d in abas.items():
+            if all(c in d.columns for c in ("Teste", "ETM", "IR")):
+                base = d
+                break
+        if base is None and abas:
+            base = list(abas.values())[0]
+        # equipamentos: aba "Equipamentos", coluna "Equipamentos"
+        for nome_aba, d in abas.items():
+            if str(nome_aba).strip().lower() == "equipamentos":
+                col = "Equipamentos" if "Equipamentos" in d.columns else (
+                    d.columns[0] if len(d.columns) else None)
+                if col is not None:
+                    equipamentos = sorted(d[col].dropna().astype(str).str.strip().unique().tolist())
+                break
+    elif os.path.exists(csv):
+        with open(csv, "rb") as fh:
+            base = _ler_tabela(fh.read(), "Base de Dados.csv")
+        if base is not None:
+            base.columns = [str(c).strip() for c in base.columns]
+
+    # fallback dos equipamentos: coluna "Equipamento" da base de testes
+    if not equipamentos and base is not None and "Equipamento" in base.columns:
+        equipamentos = sorted(base["Equipamento"].dropna().astype(str).str.strip().unique().tolist())
+
+    return base, equipamentos
 
 
 def to_excel(df: pd.DataFrame, cols_2dec=None) -> bytes:
@@ -229,7 +257,8 @@ def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi):
     am["Código de barras"] = am["Código de barras"].astype(str).str.strip()
     am["R1"] = normalizar_serie_numerica(am["Resultado 1"])
     am["R2"] = normalizar_serie_numerica(am["Resultado 2"])
-    val = am[(am["Código de barras"] != "") & (am["Código de barras"].str.lower() != "nan")
+    _bc = am["Código de barras"].str.lower()
+    val = am[~_bc.isin(["", "nan", "none"])
              & am["R1"].notna() & am["R2"].notna() & (am["R1"] != 0)].reset_index(drop=True)
     if len(val) < 3:
         return None, len(val)
@@ -256,67 +285,84 @@ def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi):
 
 def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str) -> bytes:
     """
-    Gera um PDF (A4 paisagem) apenas com o 'Detalhe por amostra'. O cabeçalho traz
-    o equipamento, o operador responsável e a data/hora. Usa matplotlib.
+    Gera um PDF (A4 paisagem) com o 'Detalhe por amostra', pronto para assinatura/
+    auditoria: **texto completo** na coluna Impacto, **quebra automática de linha**
+    e **autofit** de linhas e colunas. A coluna Impacto sai colorida (verde/vermelho,
+    como no app). Cabeçalho com equipamento, operador e data/hora. Usa reportlab.
     """
     from datetime import datetime
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib.backends.backend_pdf import PdfPages
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 
-    _rename_pdf = {"Código de barras": "Cód. barras",
-                   "Interpretação R1": "Interp. R1", "Interpretação R2": "Interp. R2",
-                   "Mudou interpretação": "Mudou interp."}
-    _impacto_curto = {
-        "Erro total discordante, realizar análise crítica": "Erro total discordante",
-        "Interpretação discordante, realizar análise crítica": "Interpretação discordante",
-        "Erro total e Interpretação discordantes, realizar análise crítica":
-            "Erro total + Interp. discord.",
-    }
+    df = detalhe.copy()
+    if "Erro total %" in df.columns:
+        df["Erro total %"] = pd.to_numeric(df["Erro total %"], errors="coerce").map(
+            lambda v: "" if pd.isna(v) else f"{v:.2f}")
+    for c in ("Excede ETM", "Mudou interpretação"):
+        if c in df.columns:
+            df[c] = df[c].map(lambda v: "Sim" if bool(v) else "Não")
+    df = df.astype(str)
+    colunas = list(df.columns)
 
-    def _fmt(df):
-        d = df.copy()
-        if "Erro total %" in d.columns:
-            d["Erro total %"] = pd.to_numeric(d["Erro total %"], errors="coerce").map(
-                lambda v: "" if pd.isna(v) else f"{v:.2f}")
-        for c in ("Excede ETM", "Mudou interpretação"):
-            if c in d.columns:
-                d[c] = d[c].map(lambda v: "Sim" if bool(v) else "Não")
-        if "Impacto" in d.columns:
-            d["Impacto"] = d["Impacto"].map(lambda v: _impacto_curto.get(v, v))
-        return d.astype(str).rename(columns=_rename_pdf)
+    ss = getSampleStyleSheet()
+    st_titulo = ParagraphStyle("titulo", parent=ss["Title"], fontSize=15, alignment=TA_LEFT,
+                               textColor=colors.HexColor("#073B4C"), spaceAfter=2)
+    st_sub = ParagraphStyle("sub", parent=ss["Normal"], fontSize=9,
+                            textColor=colors.HexColor("#333333"), spaceAfter=10)
+    st_head = ParagraphStyle("head", parent=ss["Normal"], fontName="Helvetica-Bold",
+                             fontSize=8, leading=10, alignment=TA_CENTER, textColor=colors.white)
+    st_cel = ParagraphStyle("cel", parent=ss["Normal"], fontSize=8, leading=10, alignment=TA_CENTER)
+    st_verde = ParagraphStyle("verde", parent=st_cel, textColor=colors.HexColor("#0F5132"))
+    st_vermelho = ParagraphStyle("vermelho", parent=st_cel, fontName="Helvetica-Bold",
+                                 textColor=colors.HexColor("#9B1C1C"))
 
-    df = _fmt(detalhe)
-    # larguras relativas: mais espaço para Teste, Cód. barras e Impacto
-    _lg = {"Teste": 1.2, "Cód. barras": 1.4, "Impacto": 2.6, "Excede ETM": 0.9, "Mudou interp.": 1.1}
-    col_w = [_lg.get(c, 1.0) for c in df.columns]
-    col_w = [w / sum(col_w) for w in col_w]
+    # Células como Paragraph -> quebra automática de linha; Impacto colorido pelo valor.
+    linhas = [[Paragraph(str(c), st_head) for c in colunas]]
+    for _, row in df.iterrows():
+        cel = []
+        for c in colunas:
+            v = str(row[c])
+            if c == "Impacto":
+                cel.append(Paragraph(v, st_verde if v == "Sem impacto" else st_vermelho))
+            else:
+                cel.append(Paragraph(v, st_cel))
+        linhas.append(cel)
 
-    cab = (f"Equipamento: {equipamento}    |    Operador: {operador or '—'}    |    "
-           f"Gerado em {datetime.now():%d/%m/%Y %H:%M}")
-    por_pag = 22
-    n_pag = max(1, (len(df) + por_pag - 1) // por_pag)
+    # Autofit das colunas: largura proporcional ao maior conteúdo, com teto (força a quebra).
+    pagina = landscape(A4)
+    util = pagina[0] - 20 * mm
+    natural = {c: max([len(str(c))] + [len(str(v)) for v in df[c].values]) for c in colunas}
+    TETO = 26
+    peso = [min(natural[c], TETO) for c in colunas]
+    larguras = [util * p / sum(peso) for p in peso]
+
+    tab = Table(linhas, colWidths=larguras, repeatRows=1)   # repete o cabeçalho a cada página
+    estilo = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#073B4C")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F7FA")]),
+    ]
+    if "Impacto" in colunas:
+        ci = colunas.index("Impacto")
+        for i, v in enumerate(df["Impacto"].tolist(), start=1):
+            cor = colors.HexColor("#E7F6EC") if v == "Sem impacto" else colors.HexColor("#FFE3E3")
+            estilo.append(("BACKGROUND", (ci, i), (ci, i), cor))
+    tab.setStyle(TableStyle(estilo))
+
+    cab = (f"Equipamento: {equipamento} &nbsp;&nbsp;|&nbsp;&nbsp; Operador: {operador or '—'} "
+           f"&nbsp;&nbsp;|&nbsp;&nbsp; Gerado em {datetime.now():%d/%m/%Y %H:%M}")
     buf = io.BytesIO()
-    with PdfPages(buf) as pdf:
-        for p in range(n_pag):
-            fig = plt.figure(figsize=(11.69, 8.27))          # A4 paisagem
-            ax = fig.add_subplot(111); ax.axis("off")
-            fig.suptitle("Análise de Impacto — Detalhe por amostra", fontsize=15,
-                         fontweight="bold", color="#073B4C", x=0.03, ha="left")
-            if p == 0:
-                fig.text(0.03, 0.93, cab, fontsize=9, color="#333333")
-            chunk = df.iloc[p * por_pag:(p + 1) * por_pag]
-            h = min(0.88, (len(chunk) + 1) * 0.05)           # tabela ancorada no topo
-            t = ax.table(cellText=chunk.values, colLabels=list(df.columns),
-                         colWidths=col_w, cellLoc="center", bbox=[0.0, 0.90 - h, 1.0, h])
-            t.auto_set_font_size(False); t.set_fontsize(7.5)
-            for (r, c), cell in t.get_celld().items():
-                cell.set_edgecolor("#CCCCCC")
-                if r == 0:
-                    cell.set_facecolor("#073B4C")
-                    cell.set_text_props(color="white", fontweight="bold")
-            pdf.savefig(fig); plt.close(fig)
+    doc = SimpleDocTemplate(buf, pagesize=pagina, leftMargin=10 * mm, rightMargin=10 * mm,
+                            topMargin=12 * mm, bottomMargin=10 * mm, title="Análise de Impacto")
+    doc.build([Paragraph("Análise de Impacto — Detalhe por amostra", st_titulo),
+               Paragraph(cab, st_sub), tab])
     return buf.getvalue()
 
 
@@ -336,23 +382,27 @@ with st.container(border=True):
     operador = st.text_input("Nome do operador responsável", key="operador",
                              placeholder="Digite o nome do operador responsável pela análise")
 
-base = carregar_base(None, None)
+base, equipamentos = carregar_base()
 
 if base is None or base.empty:
-    st.error("A base de dados (`Base de Dados.csv`, com as colunas Teste, Equipamento, ETM, IR) "
-             "não foi encontrada na raiz do projeto.")
+    st.error("A base de dados (`Base de Dados.xlsx` ou `Base de Dados.csv`, com as colunas "
+             "Teste, ETM, IR) não foi encontrada na raiz do projeto.")
     st.stop()
 
-faltando = [c for c in ["Teste", "Equipamento", "ETM", "IR"] if c not in base.columns]
+faltando = [c for c in ["Teste", "ETM", "IR"] if c not in base.columns]
 if faltando:
     st.error(f"A base de dados não tem a(s) coluna(s): {', '.join(faltando)}. "
              f"Colunas encontradas: {', '.join(map(str, base.columns))}.")
     st.stop()
 
+if not equipamentos:
+    st.error("Nenhum equipamento encontrado. Informe-os na aba **Equipamentos** (coluna "
+             "**Equipamentos**) do `Base de Dados.xlsx`, ou na coluna **Equipamento** da base.")
+    st.stop()
+
 base = base.copy()
 base["_ETM_num"] = normalizar_serie_numerica(base["ETM"])
 testes = sorted(base["Teste"].dropna().astype(str).str.strip().unique().tolist())
-equipamentos = sorted(base["Equipamento"].dropna().astype(str).str.strip().unique().tolist())
 
 
 def lookup_teste(teste):
