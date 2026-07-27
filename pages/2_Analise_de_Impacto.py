@@ -240,24 +240,40 @@ def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi):
     val["Interpretação R2"] = val["R2"].apply(lambda v: classificar_ref(v, lo, hi))
     val["Mudou interpretação"] = ((val["Interpretação R1"] != val["Interpretação R2"])
                                   & (val["Interpretação R1"] != "—") & (val["Interpretação R2"] != "—"))
-    val["Impacto"] = np.where(val["Excede ETM"] | val["Mudou interpretação"], "Com impacto", "Sem impacto")
+    _exc = np.asarray(val["Excede ETM"], dtype=bool)
+    _mud = np.asarray(val["Mudou interpretação"], dtype=bool)
+    val["Impacto"] = np.select(
+        [_exc & _mud, _exc & ~_mud, ~_exc & _mud],
+        ["Erro total e Interpretação discordantes, realizar análise crítica",
+         "Erro total discordante, realizar análise crítica",
+         "Interpretação discordante, realizar análise crítica"],
+        default="Sem impacto")
     val.insert(0, "Teste", teste)
     val.insert(1, "ETM (%)", etm)
     val.insert(2, "IR", ir_txt)
     return val, len(val)
 
 
-def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, resumo: pd.DataFrame, analise: str) -> bytes:
+def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str) -> bytes:
     """
-    Gera um relatório PDF (A4 paisagem) com o 'Detalhe por amostra', o 'Resumo por
-    teste' e a 'Análise crítica' do analista. Usa matplotlib (já disponível).
+    Gera um PDF (A4 paisagem) apenas com o 'Detalhe por amostra'. O cabeçalho traz
+    o equipamento, o operador responsável e a data/hora. Usa matplotlib.
     """
-    import textwrap
     from datetime import datetime
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
+
+    _rename_pdf = {"Código de barras": "Cód. barras",
+                   "Interpretação R1": "Interp. R1", "Interpretação R2": "Interp. R2",
+                   "Mudou interpretação": "Mudou interp."}
+    _impacto_curto = {
+        "Erro total discordante, realizar análise crítica": "Erro total discordante",
+        "Interpretação discordante, realizar análise crítica": "Interpretação discordante",
+        "Erro total e Interpretação discordantes, realizar análise crítica":
+            "Erro total + Interp. discord.",
+    }
 
     def _fmt(df):
         d = df.copy()
@@ -267,53 +283,39 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, resumo: pd.DataFrame, ana
         for c in ("Excede ETM", "Mudou interpretação"):
             if c in d.columns:
                 d[c] = d[c].map(lambda v: "Sim" if bool(v) else "Não")
-        return d.astype(str)
+        if "Impacto" in d.columns:
+            d["Impacto"] = d["Impacto"].map(lambda v: _impacto_curto.get(v, v))
+        return d.astype(str).rename(columns=_rename_pdf)
 
-    _rename_pdf = {"Código de barras": "Cód. barras",
-                   "Interpretação R1": "Interp. R1", "Interpretação R2": "Interp. R2",
-                   "Mudou interpretação": "Mudou interp."}
+    df = _fmt(detalhe)
+    # larguras relativas: mais espaço para Teste, Cód. barras e Impacto
+    _lg = {"Teste": 1.2, "Cód. barras": 1.4, "Impacto": 2.6, "Excede ETM": 0.9, "Mudou interp.": 1.1}
+    col_w = [_lg.get(c, 1.0) for c in df.columns]
+    col_w = [w / sum(col_w) for w in col_w]
 
-    def _tabela_paginas(pdf, df, titulo, subtitulo=None, por_pag=22):
-        df = _fmt(df).rename(columns=_rename_pdf)
-        n_pag = max(1, (len(df) + por_pag - 1) // por_pag)
+    cab = (f"Equipamento: {equipamento}    |    Operador: {operador or '—'}    |    "
+           f"Gerado em {datetime.now():%d/%m/%Y %H:%M}")
+    por_pag = 22
+    n_pag = max(1, (len(df) + por_pag - 1) // por_pag)
+    buf = io.BytesIO()
+    with PdfPages(buf) as pdf:
         for p in range(n_pag):
             fig = plt.figure(figsize=(11.69, 8.27))          # A4 paisagem
             ax = fig.add_subplot(111); ax.axis("off")
-            fig.suptitle(titulo, fontsize=15, fontweight="bold", color="#073B4C", x=0.03, ha="left")
-            if subtitulo and p == 0:
-                fig.text(0.03, 0.93, subtitulo, fontsize=9, color="#333333")
+            fig.suptitle("Análise de Impacto — Detalhe por amostra", fontsize=15,
+                         fontweight="bold", color="#073B4C", x=0.03, ha="left")
+            if p == 0:
+                fig.text(0.03, 0.93, cab, fontsize=9, color="#333333")
             chunk = df.iloc[p * por_pag:(p + 1) * por_pag]
             h = min(0.88, (len(chunk) + 1) * 0.05)           # tabela ancorada no topo
             t = ax.table(cellText=chunk.values, colLabels=list(df.columns),
-                         cellLoc="center", bbox=[0.0, 0.90 - h, 1.0, h])
+                         colWidths=col_w, cellLoc="center", bbox=[0.0, 0.90 - h, 1.0, h])
             t.auto_set_font_size(False); t.set_fontsize(7.5)
             for (r, c), cell in t.get_celld().items():
                 cell.set_edgecolor("#CCCCCC")
                 if r == 0:
                     cell.set_facecolor("#073B4C")
                     cell.set_text_props(color="white", fontweight="bold")
-            pdf.savefig(fig); plt.close(fig)
-
-    buf = io.BytesIO()
-    cabecalho = f"Equipamento: {equipamento}    |    Gerado em {datetime.now():%d/%m/%Y %H:%M}"
-    with PdfPages(buf) as pdf:
-        _tabela_paginas(pdf, detalhe, "Análise de Impacto — Detalhe por amostra", cabecalho)
-        if resumo is not None and len(resumo):
-            _tabela_paginas(pdf, resumo, "Resumo por teste")
-        # Página(s) da análise crítica
-        texto = (analise or "").strip() or "(não preenchida)"
-        linhas = []
-        for par in texto.split("\n"):
-            linhas.extend(textwrap.wrap(par, width=110) or [""])
-        por_pag_txt = 42
-        n_pag = max(1, (len(linhas) + por_pag_txt - 1) // por_pag_txt)
-        for p in range(n_pag):
-            fig = plt.figure(figsize=(11.69, 8.27))
-            ax = fig.add_subplot(111); ax.axis("off")
-            fig.suptitle("Análise crítica", fontsize=15, fontweight="bold",
-                         color="#073B4C", x=0.03, ha="left")
-            bloco = "\n".join(linhas[p * por_pag_txt:(p + 1) * por_pag_txt])
-            fig.text(0.03, 0.90, bloco, va="top", ha="left", fontsize=10)
             pdf.savefig(fig); plt.close(fig)
     return buf.getvalue()
 
@@ -328,20 +330,17 @@ st.caption(
     "automaticamente da base de dados pelo nome do teste."
 )
 
-# ---- 1 · Base de dados ---------------------------------------------------- #
+# ---- 1 · Operador responsável --------------------------------------------- #
 with st.container(border=True):
-    st.markdown("### 1 · Base de dados de testes")
-    st.caption("Colunas esperadas: **Teste**, **Equipamento**, **ETM**, **IR**. "
-               "Se você não enviar um arquivo, uso o `Base de Dados.csv` do projeto.")
-    arq_base = st.file_uploader("Base de dados (opcional se já houver no projeto)",
-                                type=["csv", "xlsx", "xls"], key="base_uploader")
+    st.markdown("### 1 · Operador responsável")
+    operador = st.text_input("Nome do operador responsável", key="operador",
+                             placeholder="Digite o nome do operador responsável pela análise")
 
-base = carregar_base(arq_base.getvalue() if arq_base is not None else None,
-                     arq_base.name if arq_base is not None else None)
+base = carregar_base(None, None)
 
 if base is None or base.empty:
-    st.info("📄 Envie a base de dados (colunas Teste, Equipamento, ETM, IR) ou inclua "
-            "o arquivo `Base de Dados.csv` na raiz do projeto para começar.")
+    st.error("A base de dados (`Base de Dados.csv`, com as colunas Teste, Equipamento, ETM, IR) "
+             "não foi encontrada na raiz do projeto.")
     st.stop()
 
 faltando = [c for c in ["Teste", "Equipamento", "ETM", "IR"] if c not in base.columns]
@@ -436,6 +435,10 @@ if not partes:
 
 todos = pd.concat(partes, ignore_index=True)
 
+if not operador.strip():
+    st.warning("✏️ Preencha o **Nome do operador responsável** (seção 1) para gerar a análise.")
+    st.stop()
+
 # ---- 3 · Resultado da análise --------------------------------------------- #
 st.markdown("### 3 · Resultado da análise de impacto")
 st.caption(f"Equipamento avaliado: **{equip_sel}** · {todos['Teste'].nunique()} teste(s).")
@@ -443,7 +446,7 @@ st.caption(f"Equipamento avaliado: **{equip_sel}** · {todos['Teste'].nunique()}
 n = len(todos)
 n_etm = int(todos["Excede ETM"].sum())
 n_interp = int(todos["Mudou interpretação"].sum())
-n_impacto = int((todos["Impacto"] == "Com impacto").sum())
+n_impacto = int((todos["Impacto"] != "Sem impacto").sum())
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Amostras analisadas", f"{n}")
@@ -458,7 +461,7 @@ else:
     st.success(f"✅ Nenhuma das {n} amostras apresentou impacto em **{equip_sel}**.")
 
 # Resumo por teste
-resumo = (todos.assign(_imp=(todos["Impacto"] == "Com impacto").astype(int),
+resumo = (todos.assign(_imp=(todos["Impacto"] != "Sem impacto").astype(int),
                        _etm=todos["Excede ETM"].astype(int),
                        _int=todos["Mudou interpretação"].astype(int))
           .groupby("Teste")
@@ -475,8 +478,9 @@ tab = todos[["Teste", "Código de barras", "R1", "R2", "Erro total %", "Excede E
 
 
 def _hl(v):
-    return ("background-color:#FFE3E3; color:#9B1C1C; font-weight:700" if v == "Com impacto"
-            else "background-color:#E7F6EC; color:#0F5132")
+    # verde claro (aprovado) quando sem impacto; vermelho claro nas discordâncias
+    return ("background-color:#E7F6EC; color:#0F5132" if v == "Sem impacto"
+            else "background-color:#FFE3E3; color:#9B1C1C; font-weight:700")
 
 
 st.markdown("**Detalhe por amostra**")
@@ -484,24 +488,14 @@ st.dataframe(tab.style.format({"Erro total %": "{:.2f}", "Resultado 1": "{:.3f}"
                                "Resultado 2": "{:.3f}"}).map(_hl, subset=["Impacto"]),
              use_container_width=True)
 
-# ---- 4 · Análise crítica -------------------------------------------------- #
-st.markdown("### 4 · Análise crítica")
-st.caption("Registre a sua avaliação dos dados acima (conclusão do analista). "
-           "Este texto entra no relatório em PDF.")
-analise_critica = st.text_area(
-    "Análise crítica do analista", height=180, key="analise_critica",
-    placeholder="Ex.: Foram avaliadas N amostras do teste X no equipamento Y. "
-                "Observou-se ... . Conduta: ...",
-    label_visibility="collapsed",
-)
-
-# ---- 5 · Exportar --------------------------------------------------------- #
-st.markdown("### 5 · Exportar")
+# ---- 4 · Exportar --------------------------------------------------------- #
+st.markdown("### 4 · Exportar")
 export = todos[["Teste", "ETM (%)", "IR", "Código de barras", "R1", "R2", "Erro total %",
                 "Excede ETM", "Interpretação R1", "Interpretação R2",
                 "Mudou interpretação", "Impacto"]].rename(
     columns={"R1": "Resultado 1", "R2": "Resultado 2"}).copy()
 export.insert(0, "Equipamento", equip_sel)
+export.insert(0, "Operador", operador)
 export["Erro total %"] = export["Erro total %"].round(2)
 
 d1, d2, d3 = st.columns(3)
@@ -516,5 +510,5 @@ with d2:
                        file_name="analise_impacto.csv", mime="text/csv")
 with d3:
     st.download_button("⬇️ Baixar (PDF)",
-                       data=gerar_pdf(tab, equip_sel, resumo, analise_critica),
+                       data=gerar_pdf(tab, equip_sel, operador),
                        file_name="analise_impacto.pdf", mime="application/pdf")
