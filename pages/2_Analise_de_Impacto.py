@@ -402,6 +402,12 @@ if not equipamentos:
 
 base = base.copy()
 base["_ETM_num"] = normalizar_serie_numerica(base["ETM"])
+# No Excel o ETM costuma ser guardado como fração (0,15 = 15%, célula formatada como %),
+# e o pandas lê o valor bruto (0,15). Se a coluna inteira estiver em fração (todos <= 1),
+# convertemos para porcentagem (x100). Valores já em % (ex.: 15) ficam como estão.
+_etm_ok = base["_ETM_num"].dropna()
+if len(_etm_ok) and _etm_ok.max() <= 1:
+    base["_ETM_num"] = base["_ETM_num"] * 100
 testes = sorted(base["Teste"].dropna().astype(str).str.strip().unique().tolist())
 
 
