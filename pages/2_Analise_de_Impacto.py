@@ -269,10 +269,10 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str) -> bytes:
                    "Interpretação R1": "Interp. R1", "Interpretação R2": "Interp. R2",
                    "Mudou interpretação": "Mudou interp."}
     _impacto_curto = {
-        "Erro total discordante, realizar análise crítica": "Erro total discordante, realizar análise crítica",
-        "Interpretação discordante, realizar análise crítica": "Interpretação discordante, realizar análise crítica",
+        "Erro total discordante, realizar análise crítica": "Erro total discordante",
+        "Interpretação discordante, realizar análise crítica": "Interpretação discordante",
         "Erro total e Interpretação discordantes, realizar análise crítica":
-            "Erro total + Interp. discord., realizar análise crítica",
+            "Erro total + Interp. discord.",
     }
 
     def _fmt(df):
