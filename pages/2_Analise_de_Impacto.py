@@ -269,10 +269,10 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str) -> bytes:
                    "Interpretação R1": "Interp. R1", "Interpretação R2": "Interp. R2",
                    "Mudou interpretação": "Mudou interp."}
     _impacto_curto = {
-        "Erro total discordante, realizar análise crítica": "Erro total discordante",
-        "Interpretação discordante, realizar análise crítica": "Interpretação discordante",
+        "Erro total discordante, realizar análise crítica": "Erro total discordante, realizar análise crítica",
+        "Interpretação discordante, realizar análise crítica": "Interpretação discordante, realizar análise crítica",
         "Erro total e Interpretação discordantes, realizar análise crítica":
-            "Erro total + Interp. discord.",
+            "Erro total + Interp. discord., realizar análise crítica",
     }
 
     def _fmt(df):
@@ -284,7 +284,7 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str) -> bytes:
             if c in d.columns:
                 d[c] = d[c].map(lambda v: "Sim" if bool(v) else "Não")
         if "Impacto" in d.columns:
-            d["Impacto"] = d["Impacto"].map(lambda v: Impacto.get(v, v))
+            d["Impacto"] = d["Impacto"].map(lambda v: _impacto_curto.get(v, v))
         return d.astype(str).rename(columns=_rename_pdf)
 
     df = _fmt(detalhe)
