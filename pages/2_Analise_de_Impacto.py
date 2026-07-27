@@ -247,6 +247,77 @@ def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi):
     return val, len(val)
 
 
+def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, resumo: pd.DataFrame, analise: str) -> bytes:
+    """
+    Gera um relatório PDF (A4 paisagem) com o 'Detalhe por amostra', o 'Resumo por
+    teste' e a 'Análise crítica' do analista. Usa matplotlib (já disponível).
+    """
+    import textwrap
+    from datetime import datetime
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    def _fmt(df):
+        d = df.copy()
+        if "Erro total %" in d.columns:
+            d["Erro total %"] = pd.to_numeric(d["Erro total %"], errors="coerce").map(
+                lambda v: "" if pd.isna(v) else f"{v:.2f}")
+        for c in ("Excede ETM", "Mudou interpretação"):
+            if c in d.columns:
+                d[c] = d[c].map(lambda v: "Sim" if bool(v) else "Não")
+        return d.astype(str)
+
+    _rename_pdf = {"Código de barras": "Cód. barras",
+                   "Interpretação R1": "Interp. R1", "Interpretação R2": "Interp. R2",
+                   "Mudou interpretação": "Mudou interp."}
+
+    def _tabela_paginas(pdf, df, titulo, subtitulo=None, por_pag=22):
+        df = _fmt(df).rename(columns=_rename_pdf)
+        n_pag = max(1, (len(df) + por_pag - 1) // por_pag)
+        for p in range(n_pag):
+            fig = plt.figure(figsize=(11.69, 8.27))          # A4 paisagem
+            ax = fig.add_subplot(111); ax.axis("off")
+            fig.suptitle(titulo, fontsize=15, fontweight="bold", color="#073B4C", x=0.03, ha="left")
+            if subtitulo and p == 0:
+                fig.text(0.03, 0.93, subtitulo, fontsize=9, color="#333333")
+            chunk = df.iloc[p * por_pag:(p + 1) * por_pag]
+            h = min(0.88, (len(chunk) + 1) * 0.05)           # tabela ancorada no topo
+            t = ax.table(cellText=chunk.values, colLabels=list(df.columns),
+                         cellLoc="center", bbox=[0.0, 0.90 - h, 1.0, h])
+            t.auto_set_font_size(False); t.set_fontsize(7.5)
+            for (r, c), cell in t.get_celld().items():
+                cell.set_edgecolor("#CCCCCC")
+                if r == 0:
+                    cell.set_facecolor("#073B4C")
+                    cell.set_text_props(color="white", fontweight="bold")
+            pdf.savefig(fig); plt.close(fig)
+
+    buf = io.BytesIO()
+    cabecalho = f"Equipamento: {equipamento}    |    Gerado em {datetime.now():%d/%m/%Y %H:%M}"
+    with PdfPages(buf) as pdf:
+        _tabela_paginas(pdf, detalhe, "Análise de Impacto — Detalhe por amostra", cabecalho)
+        if resumo is not None and len(resumo):
+            _tabela_paginas(pdf, resumo, "Resumo por teste")
+        # Página(s) da análise crítica
+        texto = (analise or "").strip() or "(não preenchida)"
+        linhas = []
+        for par in texto.split("\n"):
+            linhas.extend(textwrap.wrap(par, width=110) or [""])
+        por_pag_txt = 42
+        n_pag = max(1, (len(linhas) + por_pag_txt - 1) // por_pag_txt)
+        for p in range(n_pag):
+            fig = plt.figure(figsize=(11.69, 8.27))
+            ax = fig.add_subplot(111); ax.axis("off")
+            fig.suptitle("Análise crítica", fontsize=15, fontweight="bold",
+                         color="#073B4C", x=0.03, ha="left")
+            bloco = "\n".join(linhas[p * por_pag_txt:(p + 1) * por_pag_txt])
+            fig.text(0.03, 0.90, bloco, va="top", ha="left", fontsize=10)
+            pdf.savefig(fig); plt.close(fig)
+    return buf.getvalue()
+
+
 # =========================================================================== #
 #                                INTERFACE
 # =========================================================================== #
@@ -413,8 +484,19 @@ st.dataframe(tab.style.format({"Erro total %": "{:.2f}", "Resultado 1": "{:.3f}"
                                "Resultado 2": "{:.3f}"}).map(_hl, subset=["Impacto"]),
              use_container_width=True)
 
-# ---- 4 · Exportar --------------------------------------------------------- #
-st.markdown("### 4 · Exportar")
+# ---- 4 · Análise crítica -------------------------------------------------- #
+st.markdown("### 4 · Análise crítica")
+st.caption("Registre a sua avaliação dos dados acima (conclusão do analista). "
+           "Este texto entra no relatório em PDF.")
+analise_critica = st.text_area(
+    "Análise crítica do analista", height=180, key="analise_critica",
+    placeholder="Ex.: Foram avaliadas N amostras do teste X no equipamento Y. "
+                "Observou-se ... . Conduta: ...",
+    label_visibility="collapsed",
+)
+
+# ---- 5 · Exportar --------------------------------------------------------- #
+st.markdown("### 5 · Exportar")
 export = todos[["Teste", "ETM (%)", "IR", "Código de barras", "R1", "R2", "Erro total %",
                 "Excede ETM", "Interpretação R1", "Interpretação R2",
                 "Mudou interpretação", "Impacto"]].rename(
@@ -422,7 +504,7 @@ export = todos[["Teste", "ETM (%)", "IR", "Código de barras", "R1", "R2", "Erro
 export.insert(0, "Equipamento", equip_sel)
 export["Erro total %"] = export["Erro total %"].round(2)
 
-d1, d2 = st.columns(2)
+d1, d2, d3 = st.columns(3)
 with d1:
     st.download_button("⬇️ Baixar (Excel)",
                        data=to_excel(export, cols_2dec=["Erro total %", "Resultado 1", "Resultado 2"]),
@@ -432,3 +514,7 @@ with d2:
     csv_bytes = export.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button("⬇️ Baixar (CSV)", data=csv_bytes,
                        file_name="analise_impacto.csv", mime="text/csv")
+with d3:
+    st.download_button("⬇️ Baixar (PDF)",
+                       data=gerar_pdf(tab, equip_sel, resumo, analise_critica),
+                       file_name="analise_impacto.pdf", mime="application/pdf")
