@@ -283,7 +283,7 @@ def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi):
     return val, len(val)
 
 
-def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str) -> bytes:
+def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_problema: str) -> bytes:
     """
     Gera um PDF (A4 paisagem) com o 'Detalhe por amostra', pronto para assinatura/
     auditoria: **texto completo** na coluna Impacto, **quebra automática de linha**
@@ -357,7 +357,8 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str) -> bytes:
     tab.setStyle(TableStyle(estilo))
 
     cab = (f"Equipamento: {equipamento} &nbsp;&nbsp;|&nbsp;&nbsp; Operador: {operador or '—'} "
-           f"&nbsp;&nbsp;|&nbsp;&nbsp; Gerado em {datetime.now():%d/%m/%Y %H:%M}")
+           f"&nbsp;&nbsp;|&nbsp;&nbsp; Gerado em {datetime.now():%d/%m/%Y %H:%M} "
+           f"&nbsp;&nbsp;|&nbsp;&nbsp; Data do problema: {data_problema or '—'}")
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=pagina, leftMargin=10 * mm, rightMargin=10 * mm,
                             topMargin=12 * mm, bottomMargin=10 * mm, title="Análise de Impacto")
@@ -381,6 +382,12 @@ with st.container(border=True):
     st.markdown("### 1 · Operador responsável")
     operador = st.text_input("Nome do operador responsável", key="operador",
                              placeholder="Digite o nome do operador responsável pela análise")
+
+# ---- 2 · Data do problema ------------------------------------------------- #
+with st.container(border=True):
+    st.markdown("### 2 · Data do problema")
+    data_problema = st.date_input("Data do problema identificado", value=None,
+                                  format="DD/MM/YYYY", key="data_problema")
 
 base, equipamentos = carregar_base()
 
@@ -425,9 +432,9 @@ if "imp_blocos" not in st.session_state:
     st.session_state.imp_blocos = [1]
     st.session_state.imp_next = 2
 
-# ---- 2 · Equipamento e testes --------------------------------------------- #
+# ---- 3 · Equipamento e testes --------------------------------------------- #
 with st.container(border=True):
-    st.markdown("### 2 · Equipamento e testes")
+    st.markdown("### 3 · Equipamento e testes")
     equip_sel = st.selectbox("Equipamento (vale para todos os testes abaixo)",
                              equipamentos, index=0 if equipamentos else None)
     st.caption("Cada bloco abaixo é um **teste**, com o seu ETM e IR puxados da base e a sua "
@@ -495,8 +502,8 @@ if not operador.strip():
     st.warning("✏️ Preencha o **Nome do operador responsável** (seção 1) para gerar a análise.")
     st.stop()
 
-# ---- 3 · Resultado da análise --------------------------------------------- #
-st.markdown("### 3 · Resultado da análise de impacto")
+# ---- 4 · Resultado da análise --------------------------------------------- #
+st.markdown("### 4 · Resultado da análise de impacto")
 st.caption(f"Equipamento avaliado: **{equip_sel}** · {todos['Teste'].nunique()} teste(s).")
 
 n = len(todos)
@@ -544,8 +551,8 @@ st.dataframe(tab.style.format({"Erro total %": "{:.2f}", "Resultado 1": "{:.3f}"
                                "Resultado 2": "{:.3f}"}).map(_hl, subset=["Impacto"]),
              use_container_width=True)
 
-# ---- 4 · Exportar --------------------------------------------------------- #
-st.markdown("### 4 · Exportar")
+# ---- 5 · Exportar --------------------------------------------------------- #
+st.markdown("### 5 · Exportar")
 export = todos[["Teste", "ETM (%)", "IR", "Código de barras", "R1", "R2", "Erro total %",
                 "Excede ETM", "Interpretação R1", "Interpretação R2",
                 "Mudou interpretação", "Impacto"]].rename(
@@ -565,6 +572,7 @@ with d2:
     st.download_button("⬇️ Baixar (CSV)", data=csv_bytes,
                        file_name="analise_impacto.csv", mime="text/csv")
 with d3:
+    data_prob_txt = data_problema.strftime("%d/%m/%Y") if data_problema else ""
     st.download_button("⬇️ Baixar (PDF)",
-                       data=gerar_pdf(tab, equip_sel, operador),
+                       data=gerar_pdf(tab, equip_sel, operador, data_prob_txt),
                        file_name="analise_impacto.pdf", mime="application/pdf")
