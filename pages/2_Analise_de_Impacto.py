@@ -359,7 +359,7 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_probl
 
     cab = (f"Equipamento: {equipamento} &nbsp;&nbsp;|&nbsp;&nbsp; Operador: {operador or '—'} "
            f"&nbsp;&nbsp;|&nbsp;&nbsp; Data do problema: {data_problema or '—'}"
-           f"&nbsp;&nbsp;|&nbsp;&nbsp; Gerado em "
+           f"&nbsp;&nbsp;|&nbsp;&nbsp; Relatório gerado em "
            f"{datetime.now(ZoneInfo('America/Sao_Paulo')):%d/%m/%Y %H:%M} ")
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=pagina, leftMargin=10 * mm, rightMargin=10 * mm,
