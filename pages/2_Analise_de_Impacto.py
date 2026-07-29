@@ -291,6 +291,7 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_probl
     como no app). Cabeçalho com equipamento, operador e data/hora. Usa reportlab.
     """
     from datetime import datetime
+    from zoneinfo import ZoneInfo
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -357,7 +358,8 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_probl
     tab.setStyle(TableStyle(estilo))
 
     cab = (f"Equipamento: {equipamento} &nbsp;&nbsp;|&nbsp;&nbsp; Operador: {operador or '—'} "
-           f"&nbsp;&nbsp;|&nbsp;&nbsp; Gerado em {datetime.now():%d/%m/%Y %H:%M} "
+           f"&nbsp;&nbsp;|&nbsp;&nbsp; Gerado em "
+           f"{datetime.now(ZoneInfo('America/Sao_Paulo')):%d/%m/%Y %H:%M} "
            f"&nbsp;&nbsp;|&nbsp;&nbsp; Data do problema: {data_problema or '—'}")
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=pagina, leftMargin=10 * mm, rightMargin=10 * mm,
