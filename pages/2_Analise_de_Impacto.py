@@ -679,30 +679,32 @@ if st.session_state.get("imp_proc_sig") != _assinatura:
             "processado — clique novamente sempre que alterar algum dado.")
     st.stop()
 
-# ---- Cálculo (todos os blocos) -------------------------------------------- #
-partes, avisos = [], []
+# ---- Cálculo e validações obrigatórias (todos os blocos) ------------------ #
+resultados = []   # (teste_sel, res_ou_None, n_validas)
 for teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada in blocos_dados:
     res, q = analisar_bloco(entrada, teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi)
-    if res is None:
-        if q > 0:   # bloco vazio não gera aviso; só o parcialmente preenchido (1-2)
-            avisos.append((teste_sel, q))
-    else:
-        partes.append(res)
+    resultados.append((teste_sel, res, q))
 
-for teste_sel, q in avisos:
-    st.warning(f"⚠️ **{teste_sel}**: informe no mínimo 3 amostras válidas (há {q}). "
-               "Este teste não entrou na análise.")
+# Obrigatoriedades antes de gerar a análise: operador, data do problema e
+# no mínimo 3 amostras válidas em CADA teste adicionado (no perfil ou fora dele).
+incompletos = [(t, q) for (t, res, q) in resultados if res is None]
 
-if not partes:
-    st.info("ℹ️ Informe pelo menos um teste com **3 amostras válidas** (código de barras + "
-            "Resultado 1 e 2 numéricos, R1 ≠ 0) para ver a análise de impacto.")
-    st.stop()
-
-todos = pd.concat(partes, ignore_index=True)
-
+erros = []
 if not operador.strip():
-    st.warning("✏️ Preencha o **Nome do operador responsável** (seção 1) para gerar a análise.")
+    erros.append("Preencha o **Nome do operador responsável** (seção 1).")
+if data_problema is None:
+    erros.append("Preencha a **Data do problema** (seção 2).")
+if incompletos:
+    _lst = ", ".join(f"**{t}** ({q}/3)" for t, q in incompletos)
+    erros.append("Cada teste precisa de **no mínimo 3 amostras válidas** (código de barras + "
+                 f"Resultado 1 e 2 numéricos, R1 ≠ 0). Faltam amostras em: {_lst}.")
+
+if erros:
+    for _e in erros:
+        st.warning("⚠️ " + _e)
     st.stop()
+
+todos = pd.concat([res for (_, res, _) in resultados], ignore_index=True)
 
 # ---- 4 · Resultado da análise --------------------------------------------- #
 st.markdown("### 4 · Resultado da análise de impacto")
