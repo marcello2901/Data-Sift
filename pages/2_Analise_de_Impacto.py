@@ -585,18 +585,34 @@ for pos, bid in enumerate(blocos_ids):
             cods = ["" if _cod_vazio(c) else str(c).strip()
                     for c in (codigos_master if codigos_master is not None else ["", "", ""])]
             modelo = st.session_state.setdefault("_perfil_res", {}).setdefault(bid, {})
-            chaves, r1s, r2s = [], [], []
-            for i, c in enumerate(cods):
-                chave = c if c else f"__pos_{i}"
-                chaves.append(chave)
-                r1, r2 = modelo.get(chave, ("", ""))
-                r1s.append(r1)
-                r2s.append(r2)
-            dados = pd.DataFrame({"Código de barras": cods,
-                                  "Resultado 1": r1s, "Resultado 2": r2s})
-            # A chave do editor muda quando o conjunto de códigos muda, para os
-            # resultados acompanharem cada código (inclusive em exclusões no meio).
+            
+            # A chave do editor muda quando o conjunto de códigos muda
             ed_key = f"am_{bid}__{len(cods)}|" + "|".join(cods)
+            
+            # Chave para guardar o dataframe estático na sessão
+            df_state_key = f"_base_df_{bid}"
+
+            # SÓ recriamos o dataframe base se a lista de códigos de barras (RBC) 
+            # tiver mudado ou se for a primeira vez renderizando. 
+            # Isso evita a sobreposição de dados que apaga a digitação rápida.
+            if st.session_state.get(f"_prev_key_{bid}") != ed_key or df_state_key not in st.session_state:
+                chaves, r1s, r2s = [], [], []
+                for i, c in enumerate(cods):
+                    chave = c if c else f"__pos_{i}"
+                    chaves.append(chave)
+                    r1, r2 = modelo.get(chave, ("", ""))
+                    r1s.append(r1)
+                    r2s.append(r2)
+                
+                dados = pd.DataFrame({"Código de barras": cods,
+                                      "Resultado 1": r1s, "Resultado 2": r2s})
+                
+                st.session_state[df_state_key] = dados
+                st.session_state[f"_prev_key_{bid}"] = ed_key
+            else:
+                # Se não houve mudança nos códigos, usamos o dataframe já instanciado
+                dados = st.session_state[df_state_key]
+
             entrada = st.data_editor(
                 dados, num_rows="fixed", use_container_width=True, key=ed_key,
                 disabled=["Código de barras"],
@@ -606,9 +622,14 @@ for pos, bid in enumerate(blocos_ids):
                     "Resultado 2": st.column_config.TextColumn("Resultado 2"),
                 },
             )
+            
+            # Continua salvando no 'modelo' em background para não perder 
+            # os resultados caso você adicione um novo código de barras lá no topo.
             for i in range(len(entrada)):
-                modelo[chaves[i]] = (entrada.iloc[i]["Resultado 1"],
-                                     entrada.iloc[i]["Resultado 2"])
+                chave = cods[i] if cods[i] else f"__pos_{i}"
+                modelo[chave] = (entrada.iloc[i]["Resultado 1"],
+                                 entrada.iloc[i]["Resultado 2"])
+                
             st.caption(f"🔗 Códigos de barras replicados do teste **{nome_master}** — "
                        f"edite-os no bloco do **{nome_master}** para atualizar todos "
                        "ao mesmo tempo.")
