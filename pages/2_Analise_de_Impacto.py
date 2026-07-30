@@ -452,8 +452,8 @@ def lookup_teste(teste):
 
 # Perfis pré-configurados: ao escolher, o app já carrega os testes do perfil.
 PERFIS = {
-    "Perfil Hemograma": ["RBC", "WBC", "NEA", "LYA", "MOA", "EOA", "BAA",
-                         "HGB", "HCT", "VCM", "HCM", "CHCM", "RDW", "PLT", "VPM"],
+    "Perfil Hemograma": ["WBC", "RBC", "HGB", "HCT", "VCM", "HCM", "CHCM", "PLT", "RDW", "VPM",
+                         "NEA", "LYA", "MOA", "EOA", "BAA"],
 }
 
 
