@@ -450,6 +450,27 @@ def lookup_teste(teste):
     return etm, ir_txt, lo, hi, zc_txt, zc_lo, zc_hi
 
 
+# Perfis pré-configurados: ao escolher, o app já carrega os testes do perfil.
+PERFIS = {
+    "Perfil Hemograma": ["RBC", "WBC", "NEA", "LYA", "MOA", "EOA", "BAA",
+                         "HGB", "HCT", "VCM", "HCM", "CHCM", "RDW", "PLT", "VPM"],
+}
+
+
+def _match_teste(nome, testes):
+    """Acha o nome do teste na base que corresponde (ignorando maiúsc./minúsc. e espaços)."""
+    alvo = str(nome).strip().lower()
+    for t in testes:
+        if str(t).strip().lower() == alvo:
+            return t
+    return None
+
+
+def _cod_vazio(v) -> bool:
+    """True quando o código de barras está em branco/ausente."""
+    return str(v).strip().lower() in ("", "nan", "none", "na", "n/a")
+
+
 # Estado dos blocos de teste (um id por bloco)
 if "imp_blocos" not in st.session_state:
     st.session_state.imp_blocos = [1]
@@ -460,20 +481,93 @@ with st.container(border=True):
     st.markdown("### 3 · Equipamento e testes")
     equip_sel = st.selectbox("Equipamento (vale para todos os testes abaixo)",
                              equipamentos, index=0 if equipamentos else None)
+
+    perfil_sel = st.selectbox(
+        "Perfil (opcional) — ao escolher, já carrega todos os testes do perfil",
+        ["(nenhum)"] + list(PERFIS.keys()), key="perfil_sel")
+    if perfil_sel == "(nenhum)":
+        if st.session_state.get("_perfil_aplicado"):
+            # Voltou para "(nenhum)": desfaz o perfil e restaura os testes que
+            # existiam antes de aplicá-lo (limpando os blocos criados pelo perfil).
+            for bid in list(st.session_state.imp_blocos):
+                st.session_state.pop(f"teste_{bid}", None)
+                for k in [k for k in list(st.session_state.keys())
+                          if k == f"am_{bid}" or k.startswith(f"am_{bid}__")]:
+                    st.session_state.pop(k, None)
+            bkp = (st.session_state.get("_perfil_backup")
+                   or {"imp_blocos": [1], "imp_next": 2, "estados": {}})
+            st.session_state.imp_blocos = list(bkp["imp_blocos"])
+            st.session_state.imp_next = bkp["imp_next"]
+            # Restaura os testes escolhidos nos blocos que existiam antes do perfil
+            # (o Streamlit descarta o estado de widgets que deixam de ser renderizados).
+            for k, v in bkp.get("estados", {}).items():
+                st.session_state[k] = v
+            st.session_state["_perfil_res"] = {}
+            st.session_state["_perfil_aplicado"] = None
+            st.session_state["_perfil_faltantes"] = []
+            st.rerun()
+        st.session_state["_perfil_aplicado"] = None
+        st.session_state["_perfil_faltantes"] = []
+    elif st.session_state.get("_perfil_aplicado") != perfil_sel:
+        if not st.session_state.get("_perfil_aplicado"):
+            # Guarda o estado atual (antes do perfil) para restaurar ao voltar a "(nenhum)":
+            # ids dos blocos, próximo id e o teste escolhido em cada bloco. (O conteúdo
+            # das tabelas de amostras não pode ser reatribuído via session_state — regra
+            # do Streamlit para o data_editor — então restauramos a estrutura e os testes.)
+            estados = {f"teste_{bid}": st.session_state[f"teste_{bid}"]
+                       for bid in st.session_state.imp_blocos
+                       if f"teste_{bid}" in st.session_state}
+            st.session_state["_perfil_backup"] = {
+                "imp_blocos": list(st.session_state.imp_blocos),
+                "imp_next": st.session_state.imp_next,
+                "estados": estados,
+            }
+        achados, faltantes = [], []
+        for nome in PERFIS[perfil_sel]:
+            m = _match_teste(nome, testes)
+            (achados if m else faltantes).append(m or nome)
+        if achados:
+            ids = list(range(st.session_state.imp_next,
+                             st.session_state.imp_next + len(achados)))
+            for bid, t in zip(ids, achados):
+                st.session_state[f"teste_{bid}"] = t
+            st.session_state.imp_blocos = ids
+            st.session_state.imp_next += len(achados)
+        st.session_state["_perfil_aplicado"] = perfil_sel
+        st.session_state["_perfil_faltantes"] = faltantes
+        st.rerun()
+    if st.session_state.get("_perfil_faltantes"):
+        st.warning("Testes do perfil não encontrados na base (confira os nomes): "
+                   + ", ".join(st.session_state["_perfil_faltantes"]))
+
     st.caption("Cada bloco abaixo é um **teste**, com o seu ETM e IR puxados da base e a sua "
                "própria tabela de amostras (mínimo 3). Use o ➕ da tabela para mais linhas e o "
                "botão **Adicionar teste** para mais testes.")
 
+# Com um perfil ativo, o 1º bloco (RBC) é o "dono" dos códigos de barras: o que for
+# digitado nele é replicado (só leitura) para os demais testes do perfil. Assim o
+# usuário digita os códigos uma única vez e só preenche os resultados dos outros testes.
+perfil_ativo = bool(st.session_state.get("_perfil_aplicado"))
+blocos_ids = list(st.session_state.imp_blocos)
+codigos_master = None   # códigos do 1º bloco, preenchidos ao renderá-lo
+nome_master = "1º teste"  # nome do 1º teste (dono dos códigos), para as legendas
+
 blocos_dados = []   # (teste, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada_df)
-for bid in list(st.session_state.imp_blocos):
+for pos, bid in enumerate(blocos_ids):
+    eh_master = (pos == 0)
+    replicar = perfil_ativo and not eh_master
     with st.container(border=True):
         top = st.columns([5, 1])
         with top[0]:
-            teste_sel = st.selectbox("Nome do teste", testes,
-                                     index=0 if testes else None, key=f"teste_{bid}")
+            _tkey = f"teste_{bid}"
+            if _tkey in st.session_state:
+                teste_sel = st.selectbox("Nome do teste", testes, key=_tkey)
+            else:
+                teste_sel = st.selectbox("Nome do teste", testes,
+                                         index=0 if testes else None, key=_tkey)
         with top[1]:
             st.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
-            if len(st.session_state.imp_blocos) > 1 and st.button("🗑️ Remover", key=f"del_{bid}"):
+            if len(blocos_ids) > 1 and st.button("🗑️ Remover", key=f"del_{bid}"):
                 st.session_state.imp_blocos.remove(bid)
                 st.rerun()
 
@@ -486,23 +580,83 @@ for bid in list(st.session_state.imp_blocos):
         cE[0].metric("Erro Total Máximo (ETM)", f"{etm:.2f} %" if etm is not None else "—")
         cE[1].metric("Intervalo de Referência (IR)", ir_txt if ir_txt else "—")
 
-        seed = pd.DataFrame({"Código de barras": ["", "", ""],
-                             "Resultado 1": ["", "", ""],
-                             "Resultado 2": ["", "", ""]})
-        entrada = st.data_editor(
-            seed, num_rows="dynamic", use_container_width=True, key=f"am_{bid}",
-            column_config={
-                "Código de barras": st.column_config.TextColumn("Código de barras"),
-                "Resultado 1": st.column_config.TextColumn("Resultado 1"),
-                "Resultado 2": st.column_config.TextColumn("Resultado 2"),
-            },
-        )
+        if replicar:
+            # Códigos vêm do 1º bloco (só leitura); resultados guardados por código.
+            cods = ["" if _cod_vazio(c) else str(c).strip()
+                    for c in (codigos_master if codigos_master is not None else ["", "", ""])]
+            modelo = st.session_state.setdefault("_perfil_res", {}).setdefault(bid, {})
+            chaves, r1s, r2s = [], [], []
+            for i, c in enumerate(cods):
+                chave = c if c else f"__pos_{i}"
+                chaves.append(chave)
+                r1, r2 = modelo.get(chave, ("", ""))
+                r1s.append(r1)
+                r2s.append(r2)
+            dados = pd.DataFrame({"Código de barras": cods,
+                                  "Resultado 1": r1s, "Resultado 2": r2s})
+            # A chave do editor muda quando o conjunto de códigos muda, para os
+            # resultados acompanharem cada código (inclusive em exclusões no meio).
+            ed_key = f"am_{bid}__{len(cods)}|" + "|".join(cods)
+            entrada = st.data_editor(
+                dados, num_rows="fixed", use_container_width=True, key=ed_key,
+                disabled=["Código de barras"],
+                column_config={
+                    "Código de barras": st.column_config.TextColumn("Código de barras"),
+                    "Resultado 1": st.column_config.TextColumn("Resultado 1"),
+                    "Resultado 2": st.column_config.TextColumn("Resultado 2"),
+                },
+            )
+            for i in range(len(entrada)):
+                modelo[chaves[i]] = (entrada.iloc[i]["Resultado 1"],
+                                     entrada.iloc[i]["Resultado 2"])
+            st.caption(f"🔗 Códigos de barras replicados do teste **{nome_master}** — "
+                       f"edite-os no bloco do **{nome_master}** para atualizar todos "
+                       "ao mesmo tempo.")
+        else:
+            seed = pd.DataFrame({"Código de barras": ["", "", ""],
+                                 "Resultado 1": ["", "", ""],
+                                 "Resultado 2": ["", "", ""]})
+            entrada = st.data_editor(
+                seed, num_rows="dynamic", use_container_width=True, key=f"am_{bid}",
+                column_config={
+                    "Código de barras": st.column_config.TextColumn("Código de barras"),
+                    "Resultado 1": st.column_config.TextColumn("Resultado 1"),
+                    "Resultado 2": st.column_config.TextColumn("Resultado 2"),
+                },
+            )
+            if eh_master and perfil_ativo:
+                codigos_master = entrada["Código de barras"].tolist()
+                nome_master = teste_sel
+                st.caption(f"🔗 Perfil ativo: os códigos de barras deste teste "
+                           f"(**{nome_master}**) são replicados automaticamente para os "
+                           "demais testes do perfil.")
+
         blocos_dados.append((teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada))
 
 if st.button("➕ Adicionar teste"):
     st.session_state.imp_blocos.append(st.session_state.imp_next)
     st.session_state.imp_next += 1
     st.rerun()
+
+# ---- Processar análise ---------------------------------------------------- #
+# A análise (seções 4 e 5) só roda depois de clicar em "Processar análise".
+# Uma assinatura leve das entradas indica se o que está na tela ainda corresponde
+# ao que foi processado; enquanto o usuário digita, a assinatura muda e nada é
+# recalculado (evita travamentos ao preencher vários testes).
+_assinatura = "\n".join(
+    [str(equip_sel), str(operador), str(data_problema)]
+    + [f"{t[0]}::{t[7].to_csv(index=False)}" for t in blocos_dados]
+)
+
+st.markdown("")
+if st.button("🔎 Processar análise", type="primary"):
+    st.session_state["imp_proc_sig"] = _assinatura
+
+if st.session_state.get("imp_proc_sig") != _assinatura:
+    st.info("Preencha os resultados e clique em **🔎 Processar análise** para gerar as "
+            "seções **4 · Resultado** e **5 · Exportar**. Enquanto você digita, nada é "
+            "processado — clique novamente sempre que alterar algum dado.")
+    st.stop()
 
 # ---- Cálculo (todos os blocos) -------------------------------------------- #
 partes, avisos = [], []
