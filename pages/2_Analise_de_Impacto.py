@@ -150,6 +150,18 @@ def classificar_ref(valor, limite_inf, limite_sup):
     return "Normal"
 
 
+def classificar_com_zc(valor, lo, hi, zc_lo, zc_hi):
+    """
+    Como classificar_ref, mas se o teste tiver zona cinza e o valor cair dentro
+    dela (zc_lo <= valor <= zc_hi), a interpretação é 'Indeterminado'.
+    """
+    if pd.isna(valor):
+        return "—"
+    if zc_lo is not None and zc_hi is not None and zc_lo <= valor <= zc_hi:
+        return "Indeterminado"
+    return classificar_ref(valor, lo, hi)
+
+
 _COLS_ESPERADAS = ("Teste", "ETM", "IR")
 
 
@@ -253,7 +265,7 @@ def to_excel(df: pd.DataFrame, cols_2dec=None) -> bytes:
     return output.getvalue()
 
 
-def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi):
+def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi, zc_lo=None, zc_hi=None):
     """Valida e avalia as amostras de um teste. Devolve (df_resultado, n_validas)."""
     am = entrada.copy()
     am["Código de barras"] = am["Código de barras"].astype(str).str.strip()
@@ -267,8 +279,8 @@ def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi):
 
     val["Erro total %"] = np.abs((val["R1"] / val["R2"]) - 1) * 100
     val["Excede ETM"] = val["Erro total %"].abs() > etm if etm is not None else False
-    val["Interpretação R1"] = val["R1"].apply(lambda v: classificar_ref(v, lo, hi))
-    val["Interpretação R2"] = val["R2"].apply(lambda v: classificar_ref(v, lo, hi))
+    val["Interpretação R1"] = val["R1"].apply(lambda v: classificar_com_zc(v, lo, hi, zc_lo, zc_hi))
+    val["Interpretação R2"] = val["R2"].apply(lambda v: classificar_com_zc(v, lo, hi, zc_lo, zc_hi))
     val["Mudou interpretação"] = ((val["Interpretação R1"] != val["Interpretação R2"])
                                   & (val["Interpretação R1"] != "—") & (val["Interpretação R2"] != "—"))
     _exc = np.asarray(val["Excede ETM"], dtype=bool)
@@ -423,12 +435,19 @@ testes = sorted(base["Teste"].dropna().astype(str).str.strip().unique().tolist()
 
 
 def lookup_teste(teste):
-    """Devolve (etm, ir_txt, lo, hi) da base para o teste (1ª linha correspondente)."""
+    """
+    Devolve (etm, ir_txt, lo, hi, zc_txt, zc_lo, zc_hi) da base (1ª linha do teste).
+    zc_* vem da coluna 'Zona cinza' (quando existe e está preenchida para o teste).
+    """
     linha = base[base["Teste"].astype(str).str.strip() == str(teste)]
     etm = float(linha["_ETM_num"].dropna().iloc[0]) if not linha["_ETM_num"].dropna().empty else None
     ir_txt = str(linha["IR"].dropna().iloc[0]) if not linha["IR"].dropna().empty else ""
     lo, hi = parse_ref_range(ir_txt)
-    return etm, ir_txt, lo, hi
+    zc_txt = ""
+    if "Zona cinza" in base.columns and not linha["Zona cinza"].dropna().empty:
+        zc_txt = str(linha["Zona cinza"].dropna().iloc[0]).strip().lstrip("'")
+    zc_lo, zc_hi = parse_ref_range(zc_txt) if zc_txt else (None, None)
+    return etm, ir_txt, lo, hi, zc_txt, zc_lo, zc_hi
 
 
 # Estado dos blocos de teste (um id por bloco)
@@ -445,7 +464,7 @@ with st.container(border=True):
                "própria tabela de amostras (mínimo 3). Use o ➕ da tabela para mais linhas e o "
                "botão **Adicionar teste** para mais testes.")
 
-blocos_dados = []   # (teste, etm, ir_txt, lo, hi, entrada_df)
+blocos_dados = []   # (teste, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada_df)
 for bid in list(st.session_state.imp_blocos):
     with st.container(border=True):
         top = st.columns([5, 1])
@@ -458,8 +477,12 @@ for bid in list(st.session_state.imp_blocos):
                 st.session_state.imp_blocos.remove(bid)
                 st.rerun()
 
-        etm, ir_txt, lo, hi = lookup_teste(teste_sel)
-        cE = st.columns(2)
+        etm, ir_txt, lo, hi, zc_txt, zc_lo, zc_hi = lookup_teste(teste_sel)
+        if zc_txt:
+            cE = st.columns(3)
+            cE[2].metric("Zona cinza (indeterminado)", zc_txt)
+        else:
+            cE = st.columns(2)
         cE[0].metric("Erro Total Máximo (ETM)", f"{etm:.2f} %" if etm is not None else "—")
         cE[1].metric("Intervalo de Referência (IR)", ir_txt if ir_txt else "—")
 
@@ -474,7 +497,7 @@ for bid in list(st.session_state.imp_blocos):
                 "Resultado 2": st.column_config.TextColumn("Resultado 2"),
             },
         )
-        blocos_dados.append((teste_sel, etm, ir_txt, lo, hi, entrada))
+        blocos_dados.append((teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada))
 
 if st.button("➕ Adicionar teste"):
     st.session_state.imp_blocos.append(st.session_state.imp_next)
@@ -483,8 +506,8 @@ if st.button("➕ Adicionar teste"):
 
 # ---- Cálculo (todos os blocos) -------------------------------------------- #
 partes, avisos = [], []
-for teste_sel, etm, ir_txt, lo, hi, entrada in blocos_dados:
-    res, q = analisar_bloco(entrada, teste_sel, etm, ir_txt, lo, hi)
+for teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada in blocos_dados:
+    res, q = analisar_bloco(entrada, teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi)
     if res is None:
         if q > 0:   # bloco vazio não gera aviso; só o parcialmente preenchido (1-2)
             avisos.append((teste_sel, q))
