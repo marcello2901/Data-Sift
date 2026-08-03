@@ -156,7 +156,10 @@ def _ler_csv(path):
         return pd.read_csv(path, sep=",", decimal=".", encoding="utf-8", engine="python")
 
 
-@st.cache_data(show_spinner="Lendo planilha...")
+# max_entries=4: mantém em cache as planilhas em uso (a análise usa até 2 ao mesmo
+# tempo), sem guardar para sempre todos os arquivos já enviados ao servidor.
+# A leitura e os valores são exatamente os mesmos.
+@st.cache_data(show_spinner="Lendo planilha...", max_entries=4)
 def carregar_planilha(conteudo: bytes, nome: str) -> pd.DataFrame:
     """Recebe os bytes do arquivo enviado e devolve um DataFrame."""
     nome = nome.lower()
