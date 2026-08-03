@@ -464,7 +464,10 @@ class DataProcessor:
 
 # --- CACHED UTILITY FUNCTIONS ---
 
-@st.cache_data(show_spinner="Reading file...")
+# max_entries=1: o `path` é um arquivo temporário único a cada upload e é apagado
+# logo após a leitura, então uma entrada antiga nunca volta a ser reaproveitada —
+# sem limite, cada arquivo já lido ficava guardado inteiro na memória para sempre.
+@st.cache_data(show_spinner="Reading file...", max_entries=1)
 def _read_csv_engine(path, sep, decimal, encoding):
     """
     Lê CSV com PyArrow (rápido). Se o PyArrow falhar — por exemplo em linhas/campos
@@ -630,7 +633,9 @@ def encontrar_limites_casados(idade: float, sexo: str, lista_limites: list) -> O
         
     return globais[0] if globais else None
 
-@st.cache_data(show_spinner=False)
+# max_entries limita quantos resultados antigos ficam guardados. O cálculo e os
+# valores devolvidos são exatamente os mesmos; só deixa de acumular sem limite.
+@st.cache_data(show_spinner=False, max_entries=16)
 def run_harris_boyd(df, col_idade, col_dados, lista_limites=None, sexo_contexto="All"):
     temp_df = pd.DataFrame()
     temp_df['Age'] = pd.to_numeric(df[col_idade], errors='coerce')
@@ -882,13 +887,15 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
     plt.tight_layout()
     return fig
 
-@st.cache_data(show_spinner="Preparing file for export...")
+# Os bytes do arquivo exportado são grandes; guardar só os mais recentes evita
+# acumular na memória todas as exportações já feitas na sessão do servidor.
+@st.cache_data(show_spinner="Preparing file for export...", max_entries=2)
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-@st.cache_data(show_spinner="Preparing CSV for export...")
+@st.cache_data(show_spinner="Preparing CSV for export...", max_entries=2)
 def to_csv(df):
     return df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
 
@@ -1249,12 +1256,10 @@ def main():
                         age_range_safe = p.get('age_filter_range', (min_age_data, max_age_data))
                         fig = plot_dispersion_chart(source_df, st.session_state.col_idade, st.session_state.col_dados, st.session_state.col_sexo, p['intervalo_plot'], p['chart_type'], p['group_by_sex_plot'], p['selected_sexes_for_plot'], p['show_trendlines'], p['ref_limits_list'], age_range_safe)
 
-                        # --- NOVA PARTE: CONVERTER PARA IMAGEM FIXA ---
-                        img_buffer = None
+                        # A figura é renderizada mais abaixo por st.pyplot(res['fig']).
+                        # O PNG que era gerado aqui (img_buffer) não era usado em lugar
+                        # nenhum, então deixou de ser criado — o gráfico é o mesmo.
                         if fig:
-                            img_buffer = io.BytesIO()
-                            fig.savefig(img_buffer, format='png', bbox_inches='tight', dpi=100)
-                            img_buffer.seek(0)
                             plt.close(fig)
 
                         # 2. PRÉ-CALCULAR ESTUDOS (HARRIS-BOYD)
