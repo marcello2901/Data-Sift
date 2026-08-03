@@ -29,6 +29,7 @@ de forma independente com ``streamlit run pages/1_Analise_de_Repeticoes.py``.
 import io
 import os
 import re
+import unicodedata
 import zipfile
 import tempfile
 
@@ -143,6 +144,100 @@ def parse_limite(txt: str):
         return None
     v = normalizar_serie_numerica(pd.Series([txt])).iloc[0]
     return None if pd.isna(v) else float(v)
+
+
+# --------------------------------------------------------------------------- #
+# 1b. Erro Total Máximo (ETM) por analito, vindo da base de dados do projeto
+# --------------------------------------------------------------------------- #
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _corrigir_mojibake(texto: str) -> str:
+    """
+    Conserta acentos que ficaram gravados errados na base (ex.: 'HORMÃ”NIO' que na
+    verdade é 'HORMÔNIO'). Se o texto já estiver correto, devolve como está.
+    """
+    for enc in ("cp1252", "latin-1"):
+        try:
+            corrigido = texto.encode(enc).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if "Ã" not in corrigido and "Â" not in corrigido:
+            return corrigido
+    return texto
+
+
+def normalizar_nome_teste(nome) -> str:
+    """
+    Deixa o nome do analito comparável: conserta a acentuação, remove acentos,
+    unifica maiúsc./minúsc. e espaços repetidos. Assim 'Ácido Fólico' (planilha) e
+    'ACIDO FOLICO' (base) são reconhecidos como o mesmo teste.
+    """
+    s = _corrigir_mojibake(str(nome)).strip().upper()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", s)
+
+
+@st.cache_data(show_spinner="Lendo base de dados...", max_entries=1)
+def carregar_base_etm():
+    """
+    Lê a base do projeto (``Base de Dados.xlsx``/``.csv``) e devolve
+    ``{nome_normalizado: [(teste, etm_em_%), ...]}``.
+
+    A chave é a coluna **Descricao** — o nome do analito exatamente como ele
+    aparece na planilha que o usuário envia. O ETM sai convertido para %.
+    Um mesmo nome pode aparecer com mais de um ETM (ex.: GLICOSE em soro, líquor
+    e urina); por isso o valor é uma lista, resolvida depois na interface.
+    """
+    caminho = None
+    for nome in ("Base de Dados.xlsx", "Base de Dados.csv"):
+        p = os.path.join(APP_DIR, nome)
+        if os.path.exists(p):
+            caminho = p
+            break
+    if caminho is None:
+        return {}
+
+    try:
+        if caminho.lower().endswith(".xlsx"):
+            abas = pd.read_excel(caminho, sheet_name=None, engine="openpyxl")
+            base_db = None
+            for d in abas.values():
+                d.columns = [str(c).strip() for c in d.columns]
+                if "Descricao" in d.columns and "ETM" in d.columns:
+                    base_db = d
+                    break
+            if base_db is None:
+                return {}
+        else:
+            base_db = _ler_csv(caminho)
+            base_db.columns = [str(c).strip() for c in base_db.columns]
+    except Exception:
+        return {}
+
+    if "Descricao" not in base_db.columns or "ETM" not in base_db.columns:
+        return {}
+
+    etm = normalizar_serie_numerica(base_db["ETM"])
+    # No Excel o ETM costuma ficar guardado como fração (0,15 = 15%, célula
+    # formatada como %). Se a coluna inteira estiver assim, converte para
+    # porcentagem — mesmo critério já usado na Análise de Impacto.
+    validos = etm.dropna()
+    if len(validos) and validos.max() <= 1:
+        etm = etm * 100
+
+    nomes_teste = (base_db["Teste"] if "Teste" in base_db.columns
+                   else base_db["Descricao"])
+    mapa: dict[str, list] = {}
+    for descricao, valor, teste in zip(base_db["Descricao"], etm, nomes_teste):
+        if pd.isna(descricao) or pd.isna(valor):
+            continue
+        chave = normalizar_nome_teste(descricao)
+        if not chave:
+            continue
+        mapa.setdefault(chave, []).append((str(teste).strip(), float(valor)))
+    return mapa
 
 
 # --------------------------------------------------------------------------- #
@@ -517,7 +612,16 @@ if not dois_relatorios:
             col_id = None if _cid == "(usar nº da linha)" else _cid
         c4, c5, c6 = st.columns(3)
         with c4:
-            col_analito = st.selectbox("Coluna de analito/exame (opcional)", opc, index=0)
+            # Obrigatória: é por ela que o ETM de cada teste é puxado da base.
+            _pal_an = ["descricao", "descrição", "exame", "analito", "analita",
+                       "teste", "prova"]
+            _idx_an = next((i for i, c in enumerate(colunas)
+                            if any(p in str(c).strip().lower() for p in _pal_an)), 0)
+            col_analito = st.selectbox(
+                "Coluna de analito/exame", colunas, index=_idx_an,
+                help="Obrigatória. O nome do analito nesta coluna é comparado com a "
+                     "coluna **Descricao** da base de dados para aplicar o **Erro "
+                     "Total Máximo (ETM)** específico de cada teste.")
         with c5:
             _cd = st.selectbox("Coluna de **data** (opcional)", opc, index=0)
             col_data = None if _cd == "(nenhuma)" else _cd
@@ -702,6 +806,9 @@ if col_analito and col_analito != "(nenhuma)":
 
 # ---- Colunas adicionais para exibir/avaliar (alinhadas por posição) ------- #
 extras = {}
+# O analito acompanha cada linha: é ele que define o ETM aplicado à amostra.
+if col_analito and col_analito in df_uso.columns:
+    extras["Teste"] = df_uso[col_analito].astype(str).values
 if col_data and col_data in df_uso.columns:
     _dd = pd.to_datetime(df_uso[col_data], errors="coerce", dayfirst=True)
     extras["Data 1º Resultado"] = _dd.dt.strftime("%d/%m/%Y").fillna("").values
@@ -737,19 +844,84 @@ if descartados > 0:
 st.markdown("### 3 · Avaliação das repetições")
 st.caption(
     "Marca cada amostra como **OK** ou **Suspeita** combinando dois critérios: o "
-    "**erro total** |(R1−R2)/R1| acima do limite aceitável e a **mudança de "
+    "**erro total** |(R1−R2)/R1| acima do **ETM do próprio analito** e a **mudança de "
     "interpretação** (intervalo de referência / limite de decisão médica) entre R1 e R2."
 )
 
-# --- Critério 1: erro total máximo ---
-lim_eta = st.number_input(
-    "Limite de aceitação: Erro Total Máximo",
-    min_value=0.0, value=10.0, step=0.5,
-    help="Erro total admissível para |(R1−R2)/R1|, em %. Pares acima disto são "
-         "sinalizados como suspeitos. Defina conforme a especificação do analito "
-         "(variação biológica, CLIA, RDC).",
-)
-base["Suspeito_erro"] = base["ETA_%"].abs() > lim_eta
+# --- Critério 1: Erro Total Máximo (ETM) de cada analito, vindo da base ---
+st.markdown("**Erro Total Máximo (ETM) por analito**")
+mapa_etm = carregar_base_etm()
+if not mapa_etm:
+    st.error(
+        "Não foi possível ler o **ETM por analito** da base de dados. Verifique se o "
+        "`Base de Dados.xlsx` está na raiz do projeto e tem as colunas **Descricao** "
+        "(nome do analito como aparece na planilha) e **ETM**."
+    )
+    st.stop()
+
+if "Teste" not in base.columns:
+    st.error("Selecione a **Coluna de analito/exame** na seção 2 para que o ETM de "
+             "cada teste possa ser aplicado.")
+    st.stop()
+
+testes_planilha = sorted(base["Teste"].dropna().astype(str).unique().tolist())
+etm_por_teste, ambiguos, sem_etm = {}, {}, []
+for _t in testes_planilha:
+    _achados = mapa_etm.get(normalizar_nome_teste(_t))
+    if not _achados:
+        sem_etm.append(_t)
+        continue
+    if len({v for _, v in _achados}) > 1:
+        ambiguos[_t] = _achados
+    # Padrão conservador: entre ETMs diferentes usa o menor (mais restritivo).
+    etm_por_teste[_t] = min(v for _, v in _achados)
+
+# Mesma Descricao com ETMs diferentes (ex.: GLICOSE soro/líquor/urina): a planilha
+# não diz o material, então o usuário escolhe qual especificação vale.
+if ambiguos:
+    st.warning(
+        f"{len(ambiguos)} analito(s) têm mais de um ETM na base (mesma **Descricao**, "
+        "especificações diferentes). Está sendo usado o **mais restritivo**; confira "
+        "abaixo se é esse o correto."
+    )
+    with st.expander(f"⚖️ Revisar {len(ambiguos)} analito(s) com mais de um ETM"):
+        for _t, _achados in ambiguos.items():
+            _rot = [f"{nome} — ETM {v:.2f} %" for nome, v in _achados]
+            _i_min = min(range(len(_achados)), key=lambda i: _achados[i][1])
+            _esc = st.selectbox(f"ETM para **{_t}**", _rot, index=_i_min,
+                                key=f"etm_amb_{_t}")
+            etm_por_teste[_t] = _achados[_rot.index(_esc)][1]
+
+# Analitos que não existem na base: sem ETM não dá para julgar o erro total.
+if sem_etm:
+    st.warning(
+        f"{len(sem_etm)} analito(s) da planilha não foram encontrados na coluna "
+        f"**Descricao** da base: {', '.join(sem_etm[:15])}"
+        + (" …" if len(sem_etm) > 15 else "")
+        + ". Informe abaixo o ETM a aplicar a eles (ou acerte a **Descricao** na base)."
+    )
+    etm_fallback = st.number_input(
+        "ETM para os analitos sem correspondência na base (%)",
+        min_value=0.0, value=10.0, step=0.5,
+        help="Aplicado somente aos analitos listados acima. Os demais usam o ETM "
+             "da base de dados.",
+    )
+    for _t in sem_etm:
+        etm_por_teste[_t] = float(etm_fallback)
+
+base["ETM (%)"] = base["Teste"].astype(str).map(etm_por_teste)
+base["Suspeito_erro"] = base["ETA_%"].abs() > base["ETM (%)"]
+
+with st.expander(f"📋 ETM aplicado a cada um dos {len(testes_planilha)} analito(s)"):
+    _tab_etm = pd.DataFrame({
+        "Analito (planilha)": testes_planilha,
+        "ETM aplicado (%)": [etm_por_teste.get(t) for t in testes_planilha],
+        "Origem": ["Base de dados" if t not in sem_etm else "Informado acima"
+                   for t in testes_planilha],
+        "Amostras": [int((base["Teste"].astype(str) == t).sum()) for t in testes_planilha],
+    })
+    st.dataframe(_tab_etm.style.format({"ETM aplicado (%)": "{:.2f}"}),
+                 use_container_width=True)
 
 # --- Critério 2: intervalo de referência / limite de decisão médica ---
 st.markdown("**Intervalo de referência / limite de decisão médica**")
@@ -825,7 +997,8 @@ cA, cB, cC = st.columns(3)
 cA.metric("Mudança de interpretação", f"{n_mudou}")
 cB.metric("Suspeitos pelo erro total", f"{n_erro}")
 cC.metric("Suspeitos (combinado)", f"{n_comb}",
-          help=f"Erro total |(R1−R2)/R1| > {lim_eta:.1f}% OU mudança de interpretação entre R1 e R2.")
+          help="Erro total |(R1−R2)/R1| acima do ETM do próprio analito OU mudança "
+               "de interpretação entre R1 e R2.")
 
 if n_comb:
     st.error(f"⚠️ {n_comb} amostra(s) suspeita(s) por pelo menos um critério "
@@ -843,8 +1016,11 @@ cols_extra = [c for c in ["Data 1º Resultado", "Hora R1", "Equip. R1", "Equip. 
                           "R1 anterior", "Idade", "Sexo", "Usuário validação R1"]
               if c in tab3.columns]
 cols_interp = ["Interpretação R1", "Interpretação R2"] if tem_ref else []
-col_ordem = (["Código de barras"] + cols_extra + ["R1", "R2"] + cols_interp
-             + ["(R1−R2)/R1 %", "Motivo", "Situação"])
+# O analito e o ETM aplicado ficam visíveis: é o que justifica cada veredito.
+col_teste = ["Teste"] if "Teste" in tab3.columns else []
+col_etm = ["ETM (%)"] if "ETM (%)" in tab3.columns else []
+col_ordem = (["Código de barras"] + col_teste + cols_extra + ["R1", "R2"] + cols_interp
+             + ["(R1−R2)/R1 %"] + col_etm + ["Motivo", "Situação"])
 tab3 = tab3[col_ordem]
 
 def _hl(v):
@@ -972,13 +1148,13 @@ st.markdown("### 5 · Exportar resultados")
 # Monta o relatório de saída: remove colunas internas, arredonda, reordena e renomeia.
 export = base.drop(columns=["_lo", "_hi", "DataHora", "Suspeito_erro", "Mudou_interp"],
                    errors="ignore").copy()
-cols_2dec = [c for c in ["DP_par", "CV_par_%", "ETA_%"]
+cols_2dec = [c for c in ["DP_par", "CV_par_%", "ETA_%", "ETM (%)"]
              if c in export.columns]
 for _c in cols_2dec:
     export[_c] = pd.to_numeric(export[_c], errors="coerce").round(2)
 # Ordem desejada (nomes internos); o restante segue na ordem atual.
-_lead = [c for c in ["ID", "Idade", "Sexo", "R1", "R2", "R1 anterior", "Data 1º Resultado",
-                     "Hora R1", "Equip. R1", "Equip. R2", "RefRange",
+_lead = [c for c in ["ID", "Teste", "Idade", "Sexo", "R1", "R2", "R1 anterior",
+                     "Data 1º Resultado", "Hora R1", "Equip. R1", "Equip. R2", "RefRange",
                      "Usuário validação R1"] if c in export.columns]
 _rest = [c for c in export.columns if c not in _lead]
 export = export[_lead + _rest]
