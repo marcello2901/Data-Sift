@@ -297,12 +297,39 @@ def analisar_bloco(entrada: pd.DataFrame, teste, etm, ir_txt, lo, hi, zc_lo=None
     return val, len(val)
 
 
-def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_problema: str) -> bytes:
+EXT_ANEXO = ("jpg", "jpeg", "png", "pdf")
+
+
+def _anexo_eh_pdf(nome: str) -> bool:
+    return str(nome).lower().endswith(".pdf")
+
+
+def _juntar_pdfs(relatorio: bytes, anexo: bytes) -> bytes:
+    """
+    Acrescenta as páginas do anexo em PDF **depois** do relatório, cada uma como
+    página própria. Precisa da biblioteca ``pypdf`` (ver requirements.txt).
+    """
+    from pypdf import PdfReader, PdfWriter
+    escritor = PdfWriter()
+    for parte in (relatorio, anexo):
+        for pagina in PdfReader(io.BytesIO(parte)).pages:
+            escritor.add_page(pagina)
+    saida = io.BytesIO()
+    escritor.write(saida)
+    return saida.getvalue()
+
+
+def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_problema: str,
+              anexo: tuple | None = None) -> bytes:
     """
     Gera um PDF (A4 paisagem) com o 'Detalhe por amostra', pronto para assinatura/
     auditoria: **texto completo** na coluna Impacto, **quebra automática de linha**
     e **autofit** de linhas e colunas. A coluna Impacto sai colorida (verde/vermelho,
     como no app). Cabeçalho com equipamento, operador e data/hora. Usa reportlab.
+
+    ``anexo`` é ``(nome_do_arquivo, bytes)`` com os dados brutos (jpg/png/pdf).
+    Ele entra **sempre em página nova**, depois da tabela: imagens são inseridas
+    após uma quebra de página; PDFs têm as suas páginas anexadas ao final.
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -311,7 +338,9 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_probl
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle, Paragraph,
+                                    PageBreak, Image as RLImage, Spacer)
 
     df = detalhe.copy()
     if "Erro total %" in df.columns:
@@ -376,11 +405,42 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_probl
            f"&nbsp;&nbsp;|&nbsp;&nbsp; Relatório gerado em "
            f"{datetime.now(ZoneInfo('America/Sao_Paulo')):%d/%m/%Y %H:%M} ")
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=pagina, leftMargin=10 * mm, rightMargin=10 * mm,
-                            topMargin=12 * mm, bottomMargin=10 * mm, title="Análise de Impacto")
-    doc.build([Paragraph("Análise de Impacto — Detalhe por amostra", st_titulo),
-               Paragraph(cab, st_sub), tab])
-    return buf.getvalue()
+    m_esq = m_dir = 10 * mm
+    m_topo, m_base = 12 * mm, 10 * mm
+    doc = SimpleDocTemplate(buf, pagesize=pagina, leftMargin=m_esq, rightMargin=m_dir,
+                            topMargin=m_topo, bottomMargin=m_base, title="Análise de Impacto")
+    story = [Paragraph("Análise de Impacto — Detalhe por amostra", st_titulo),
+             Paragraph(cab, st_sub), tab]
+
+    # ---- Dados brutos em PÁGINA NOVA ---------------------------------------- #
+    nome_anexo = dados_anexo = None
+    if anexo:
+        nome_anexo, dados_anexo = anexo[0], anexo[1]
+
+    if dados_anexo and not _anexo_eh_pdf(nome_anexo):
+        # Imagem: quebra de página garante que nunca divida espaço com a tabela.
+        larg_util = pagina[0] - m_esq - m_dir
+        alt_util = pagina[1] - m_topo - m_base
+        story += [PageBreak(),
+                  Paragraph("Dados brutos dos resultados", st_titulo),
+                  Paragraph(f"Arquivo: {nome_anexo}", st_sub)]
+        try:
+            iw, ih = ImageReader(io.BytesIO(dados_anexo)).getSize()
+            alt_sobra = alt_util - 22 * mm          # desconta título + legenda
+            escala = min(larg_util / iw, alt_sobra / ih)
+            story.append(RLImage(io.BytesIO(dados_anexo),
+                                 width=iw * escala, height=ih * escala))
+        except Exception:
+            story.append(Paragraph("Não foi possível inserir a imagem dos dados brutos.",
+                                   st_sub))
+
+    doc.build(story)
+    relatorio = buf.getvalue()
+
+    if dados_anexo and _anexo_eh_pdf(nome_anexo):
+        # PDF: as páginas do anexo entram inteiras, ao final do relatório.
+        relatorio = _juntar_pdfs(relatorio, dados_anexo)
+    return relatorio
 
 
 # =========================================================================== #
@@ -476,11 +536,29 @@ if "imp_blocos" not in st.session_state:
     st.session_state.imp_blocos = [1]
     st.session_state.imp_next = 2
 
-# ---- 3 · Equipamento e testes --------------------------------------------- #
+# ---- 3 · Equipamento, dados brutos e testes -------------------------------- #
 with st.container(border=True):
-    st.markdown("### 3 · Equipamento e testes")
+    st.markdown("### 3 · Equipamento, dados brutos e testes")
     equip_sel = st.selectbox("Equipamento (vale para todos os testes abaixo)",
                              equipamentos, index=0 if equipamentos else None)
+
+    # Comprovante dos resultados digitados nas tabelas. Obrigatório: o PDF final é
+    # assinado e auditado, e sai com este arquivo em página própria.
+    arq_bruto = st.file_uploader(
+        "Dados brutos dos resultados (obrigatório) — JPG, PNG ou PDF",
+        type=list(EXT_ANEXO), accept_multiple_files=False, key="imp_dados_brutos",
+        help="Print ou relatório do equipamento/sistema com os resultados que você "
+             "vai digitar nas tabelas abaixo. Ele entra em uma página nova, ao final "
+             "do PDF baixado.")
+    if arq_bruto is not None:
+        _tam_kb = len(arq_bruto.getvalue()) / 1024
+        st.caption(f"📎 **{arq_bruto.name}** ({_tam_kb:,.0f} KB) — será anexado em "
+                   "página própria no PDF final.")
+        if not _anexo_eh_pdf(arq_bruto.name):
+            # use_column_width (e não use_container_width): st.image só ganhou o
+            # segundo em versões mais novas, e o requirements fixa streamlit 1.32.2.
+            st.image(arq_bruto.getvalue(), caption="Pré-visualização dos dados brutos",
+                     use_column_width=True)
 
     perfil_sel = st.selectbox(
         "Perfil (opcional) — ao escolher, já carrega todos os testes do perfil",
@@ -664,8 +742,10 @@ if st.button("➕ Adicionar teste"):
 # Uma assinatura leve das entradas indica se o que está na tela ainda corresponde
 # ao que foi processado; enquanto o usuário digita, a assinatura muda e nada é
 # recalculado (evita travamentos ao preencher vários testes).
+_anexo_id = (f"{arq_bruto.name}:{len(arq_bruto.getvalue())}" if arq_bruto is not None
+             else "sem-anexo")
 _assinatura = "\n".join(
-    [str(equip_sel), str(operador), str(data_problema)]
+    [str(equip_sel), str(operador), str(data_problema), _anexo_id]
     + [f"{t[0]}::{t[7].to_csv(index=False)}" for t in blocos_dados]
 )
 
@@ -694,6 +774,9 @@ if not operador.strip():
     erros.append("Preencha o **Nome do operador responsável** (seção 1).")
 if data_problema is None:
     erros.append("Preencha a **Data do problema** (seção 2).")
+if arq_bruto is None:
+    erros.append("Envie o arquivo com os **dados brutos dos resultados** "
+                 "(JPG, PNG ou PDF) na seção 3.")
 if incompletos:
     _lst = ", ".join(f"**{t}** ({q}/3)" for t, q in incompletos)
     erros.append("Cada teste precisa de **no mínimo 3 amostras válidas** (código de barras + "
@@ -784,6 +867,16 @@ with d2:
                        file_name=f"{_nome_arq}.csv", mime="text/csv")
 with d3:
     data_prob_txt = data_problema.strftime("%d/%m/%Y") if data_problema else ""
-    st.download_button("⬇️ Baixar (PDF)",
-                       data=gerar_pdf(tab, equip_sel, operador, data_prob_txt),
+    _anexo = (arq_bruto.name, arq_bruto.getvalue()) if arq_bruto is not None else None
+    try:
+        _pdf_bytes = gerar_pdf(tab, equip_sel, operador, data_prob_txt, anexo=_anexo)
+    except ModuleNotFoundError:
+        # Anexo em PDF precisa do pypdf; sem ele, gera o relatório sem o anexo.
+        st.warning("Para anexar **dados brutos em PDF** é preciso a biblioteca `pypdf` "
+                   "(adicione `pypdf` ao requirements.txt). O relatório foi gerado sem "
+                   "o anexo — envie os dados brutos como JPG/PNG para incluí-los agora.")
+        _pdf_bytes = gerar_pdf(tab, equip_sel, operador, data_prob_txt)
+    st.download_button("⬇️ Baixar (PDF)", data=_pdf_bytes,
                        file_name=f"{_nome_arq}.pdf", mime="application/pdf")
+st.caption("O **PDF** leva os dados brutos enviados na seção 3 em **página própria**, "
+           "após a tabela. O .xlsx e o .csv contêm apenas a tabela.")
