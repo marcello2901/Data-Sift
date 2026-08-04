@@ -10,13 +10,13 @@ primeira (R1).
 
 Blocos de análise:
   3) Avaliação das repetições: marca cada amostra como OK/Suspeita combinando o
-     erro total |(R1−R2)/R1| acima de um limite e a mudança de interpretação
-     (intervalo de referência da própria planilha ou informado manualmente).
-  4) Gráficos de apoio: Bland-Altman e média móvel das diferenças (deriva).
+     erro total |(R1−R2)/R1| acima do ETM do próprio analito (vindo da base) e a
+     mudança de interpretação (intervalo de referência da própria planilha ou
+     informado manualmente — neste caso é possível definir limites por analito).
+  4) Exportar resultados.
 
 Cada amostra é identificada pelo código de barras, para rastrear qual paciente
-ficou suspeito. A média móvel das diferenças pode ser ordenada pela data/hora
-do resultado.
+ficou suspeito.
 
 Entrada dos dados: (A) uma planilha já com R1 e R2 na mesma linha; ou (B) dois
 relatórios (original e repetição) que o script junta automaticamente por
@@ -36,7 +36,6 @@ import tempfile
 import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
 
 # --------------------------------------------------------------------------- #
 # Configuração de página / identidade visual (mesma paleta do DataSift)
@@ -947,23 +946,71 @@ if origem_ref.startswith("Usar o do sistema"):
         st.warning(f"{n_falha} amostra(s) com intervalo não interpretável — ficam como "
                    "'—' e não contam como mudança de interpretação.")
 else:
-    ci1, ci2 = st.columns(2)
-    with ci1:
-        txt_inf = st.text_input("Limite inferior do normal (deixe vazio se não usar)", value="")
-    with ci2:
-        txt_sup = st.text_input("Limite superior do normal (deixe vazio se não usar)", value="")
-    lim_inf, lim_sup = parse_limite(txt_inf), parse_limite(txt_sup)
-    if lim_inf is not None and lim_sup is not None and lim_inf > lim_sup:
-        st.warning("O limite inferior é maior que o superior. Verifique os valores.")
-    base["_lo"] = lim_inf
-    base["_hi"] = lim_sup
-    tem_ref = (lim_inf is not None) or (lim_sup is not None)
-    if tem_ref:
-        faixa_txt = (f"{lim_inf if lim_inf is not None else '−∞'} a "
-                     f"{lim_sup if lim_sup is not None else '+∞'}")
-        st.caption(f"Faixa normal: **{faixa_txt}** (limites inclusivos, aplicada a todas as amostras).")
+    _testes_ref = (sorted(base["Teste"].dropna().astype(str).unique().tolist())
+                   if "Teste" in base.columns else [])
+    if len(_testes_ref) > 1:
+        # Vários analitos na planilha: cada um tem o seu próprio intervalo, então os
+        # limites são informados por analito (um único par não serviria para todos).
+        st.caption(
+            f"A planilha tem **{len(_testes_ref)} analitos**: informe o intervalo de cada "
+            "um. Pode deixar em branco os que não quiser avaliar por interpretação — "
+            "esses ficam como “—” e são julgados **apenas pelo erro total**."
+        )
+        _seed = pd.DataFrame({"Analito": _testes_ref,
+                              "Limite inferior": [""] * len(_testes_ref),
+                              "Limite superior": [""] * len(_testes_ref)})
+        _ed = st.data_editor(
+            _seed, num_rows="fixed", use_container_width=True,
+            key="ref_manual_por_analito", disabled=["Analito"],
+            column_config={
+                "Analito": st.column_config.TextColumn("Analito"),
+                "Limite inferior": st.column_config.TextColumn(
+                    "Limite inferior", help="Vazio = sem limite inferior. Aceita vírgula."),
+                "Limite superior": st.column_config.TextColumn(
+                    "Limite superior", help="Vazio = sem limite superior. Aceita vírgula."),
+            },
+        )
+        _lo_map, _hi_map, _invertidos, _n_preench = {}, {}, [], 0
+        for _, _r in _ed.iterrows():
+            _t = str(_r["Analito"])
+            _li = parse_limite(_r["Limite inferior"])
+            _ls = parse_limite(_r["Limite superior"])
+            if _li is not None and _ls is not None and _li > _ls:
+                _invertidos.append(_t)
+            _lo_map[_t], _hi_map[_t] = _li, _ls
+            if _li is not None or _ls is not None:
+                _n_preench += 1
+        if _invertidos:
+            st.warning("Limite inferior maior que o superior em: **"
+                       + "**, **".join(_invertidos) + "**. Verifique os valores.")
+        # Cada amostra recebe o limite do analito da sua própria linha.
+        base["_lo"] = base["Teste"].astype(str).map(_lo_map)
+        base["_hi"] = base["Teste"].astype(str).map(_hi_map)
+        tem_ref = _n_preench > 0
+        if tem_ref:
+            st.caption(f"Intervalo informado para **{_n_preench}** de "
+                       f"**{len(_testes_ref)}** analito(s) — limites inclusivos. Cada amostra "
+                       "é avaliada pelo intervalo do **seu próprio** analito.")
+        else:
+            st.info("Sem intervalo definido: a avaliação usa **apenas** o critério de erro total.")
     else:
-        st.info("Sem intervalo definido: a avaliação usa **apenas** o critério de erro total.")
+        ci1, ci2 = st.columns(2)
+        with ci1:
+            txt_inf = st.text_input("Limite inferior do normal (deixe vazio se não usar)", value="")
+        with ci2:
+            txt_sup = st.text_input("Limite superior do normal (deixe vazio se não usar)", value="")
+        lim_inf, lim_sup = parse_limite(txt_inf), parse_limite(txt_sup)
+        if lim_inf is not None and lim_sup is not None and lim_inf > lim_sup:
+            st.warning("O limite inferior é maior que o superior. Verifique os valores.")
+        base["_lo"] = lim_inf
+        base["_hi"] = lim_sup
+        tem_ref = (lim_inf is not None) or (lim_sup is not None)
+        if tem_ref:
+            faixa_txt = (f"{lim_inf if lim_inf is not None else '−∞'} a "
+                         f"{lim_sup if lim_sup is not None else '+∞'}")
+            st.caption(f"Faixa normal: **{faixa_txt}** (limites inclusivos, aplicada a todas as amostras).")
+        else:
+            st.info("Sem intervalo definido: a avaliação usa **apenas** o critério de erro total.")
 
 # --- Classificação e situação combinada ---
 if tem_ref:
@@ -1042,108 +1089,8 @@ if tem_ref:
                                  rownames=["R1"], colnames=["R2"]),
                      use_container_width=True)
 
-# ---- Bloco 4: gráficos de apoio (deriva e concordância) ------------------- #
-st.markdown("### 4 · Gráficos de apoio (deriva e concordância)")
-md = resumo["vies_medio"]
-sd = base["Diferenca"].std(ddof=1)
-g1, g2 = st.columns(2)
-
-with g1:
-    # Bland-Altman: média do par (x) vs diferença (y)
-    fig, ax = plt.subplots(figsize=(5, 3.6))
-    ax.scatter(base["Media_par"], base["Diferenca"], s=14, alpha=0.6, color=COLOR_TERTIARY)
-    ax.axhline(md, color=COLOR_PRIMARY, lw=1.5, label=f"Viés = {md:.3f}")
-    if pd.notna(sd):
-        ax.axhline(md + 1.96 * sd, color="#EF476F", ls="--", lw=1, label="±1,96 DP")
-        ax.axhline(md - 1.96 * sd, color="#EF476F", ls="--", lw=1)
-    ax.set_xlabel("Média do par (R1+R2)/2")
-    ax.set_ylabel("Diferença (R1−R2)")
-    ax.set_title("Bland-Altman")
-    ax.legend(fontsize=7)
-    ax.grid(alpha=0.2)
-    st.pyplot(fig, clear_figure=True)
-
-with g2:
-    # Média móvel da diferença — ordenada por data/hora se disponível, senão por ordem
-    janela = st.slider("Janela da média móvel das diferenças", 3, 50, 10)
-    tem_dt = "DataHora" in base.columns and base["DataHora"].notna().any()
-    if tem_dt:
-        ordf = base.dropna(subset=["DataHora"]).sort_values("DataHora").reset_index(drop=True)
-        x, xlabel = ordf["DataHora"], "Data/hora do resultado"
-        sem_dt = int(base["DataHora"].isna().sum())
-    else:
-        ordf = base.reset_index(drop=True)
-        x, xlabel, sem_dt = ordf.index, "Ordem da amostra", 0
-    y = ordf["Diferenca"]
-    mm = y.rolling(janela, min_periods=1).mean()
-    fig2, ax2 = plt.subplots(figsize=(5, 3.6))
-    ax2.plot(x, y.values, ".", ms=4, alpha=0.35, color="#999", label="Diferença")
-    ax2.plot(x, mm.values, "-", lw=2, color=COLOR_SECONDARY, label=f"Média móvel ({janela})")
-    ax2.axhline(0, color=COLOR_PRIMARY, lw=1)
-    ax2.set_xlabel(xlabel)
-    ax2.set_ylabel("Diferença (R1−R2)")
-    ax2.set_title("Média móvel da diferença (deriva do sistema)")
-    ax2.legend(fontsize=7)
-    ax2.grid(alpha=0.2)
-    if tem_dt:
-        fig2.autofmt_xdate()
-    st.pyplot(fig2, clear_figure=True)
-    if tem_dt and sem_dt:
-        st.caption(f"{sem_dt} amostra(s) sem data/hora válida não entraram neste gráfico.")
-    elif not tem_dt and (col_data or col_hora):
-        st.caption("Não foi possível interpretar a data/hora; gráfico ordenado pela ordem da amostra.")
-
-# Tabela dos pontos fora dos limites de concordância (±1,96 DP) do Bland-Altman
-if pd.notna(sd) and sd > 0:
-    lim_ba = 1.96 * sd
-    fora = base[(base["Diferenca"] - md).abs() > lim_ba]
-    st.markdown(f"**Amostras fora dos limites de concordância do Bland-Altman "
-                f"(viés {md:.3f} ± {lim_ba:.3f})**")
-    if len(fora):
-        tab_fora = fora.rename(columns={"ID": "Código de barras",
-                                        "Diferenca": "R1−R2"})[["Código de barras", "R1", "R2", "R1−R2"]]
-        st.dataframe(tab_fora.style.format(precision=3), use_container_width=True)
-    else:
-        st.success("Nenhuma amostra fora dos limites de ±1,96 DP.")
-
-with st.expander("ℹ️ Como interpretar os gráficos"):
-    st.markdown(
-        """
-**Gráfico de Bland-Altman** — mostra, para cada amostra, a **média do par**
-`(R1+R2)/2` no eixo X e a **diferença** `R1−R2` no eixo Y. Serve para enxergar a
-concordância entre a 1ª e a 2ª medição ao longo de toda a faixa de concentração.
-
-- A **linha cheia central** é o **viés médio**. Se ela está bem afastada do zero,
-  há um **erro sistemático** entre R1 e R2 (o sistema tende a ler mais alto ou mais
-  baixo na repetição).
-- As **linhas tracejadas** são os **limites de concordância** (viés ± 1,96·DP);
-  espera-se que ~95% dos pontos fiquem dentro delas. Os pontos **fora** aparecem
-  listados na tabela logo acima, com o código de barras — são as amostras mais
-  discrepantes, candidatas a suspeitas.
-- Se a nuvem de pontos **abre como um funil** ou **inclina** conforme a concentração
-  aumenta, o erro é **proporcional à concentração** (típico de problema de calibração
-  ou linearidade), e não um erro constante.
-- Idealmente os pontos ficam espalhados **simetricamente em torno do zero**, sem padrão.
-
-**Média móvel da diferença** — mostra a diferença `R1−R2` de cada amostra na
-**ordem cronológica** (quando você informa data e hora) ou na ordem da planilha, com
-uma **média móvel** (linha destacada) que suaviza o ruído e revela **tendências ao
-longo do tempo/corrida**.
-
-- A média móvel deve **oscilar em torno do zero**. Uma **subida ou descida
-  sustentada** indica uma **deriva** do sistema (reagente envelhecendo, calibração
-  saindo do lugar, degradação do equipamento) — mesmo que cada par individual pareça
-  aceitável.
-- Um **degrau/salto abrupto** costuma marcar um **evento**: troca de lote de reagente,
-  recalibração, manutenção. Cruzar a posição do salto com o log do equipamento (pela
-  data/hora) ajuda a achar a causa.
-- Use a **janela** para ajustar a sensibilidade: janela pequena reage rápido a
-  mudanças (mais ruído); janela grande evidencia tendências longas (mais suave).
-"""
-    )
-
 # ---- Bloco 5: exportar ---------------------------------------------------- #
-st.markdown("### 5 · Exportar resultados")
+st.markdown("### 4 · Exportar resultados")
 
 # Monta o relatório de saída: remove colunas internas, arredonda, reordena e renomeia.
 export = base.drop(columns=["_lo", "_hi", "DataHora", "Suspeito_erro", "Mudou_interp"],
