@@ -1,0 +1,33 @@
+# --- Segredos: NUNCA versionar ---
+.streamlit/secrets.toml
+*.env
+.env
+.env.*
+!.env.example
+# --- Banco local de desenvolvimento ---
+.datasift/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+# --- Dados clínicos ---
+*.csv
+*.xlsx
+*.xls
+!Base de Dados.xlsx
+!Base de Dados.csv
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+# --- Sistema operacional / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
