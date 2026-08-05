@@ -27,6 +27,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional, Sequence
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -35,6 +36,48 @@ from .config import get_config
 
 _init_lock = threading.Lock()
 _initialized = False
+
+# --- Disjuntor de conexão ---------------------------------------------------
+# Depois de uma falha ao conectar, novas tentativas são recusadas localmente
+# durante alguns segundos, sem tocar a rede.
+#
+# Isto existe por causa de um incidente real: o Streamlit reexecuta o script
+# inteiro a cada interação do usuário, e cada reexecução tentava conectar de
+# novo. Com a credencial errada, isso vira uma rajada de falhas de
+# autenticação contra o banco — o Supabase interpreta como ataque e aciona o
+# próprio disjuntor ("ECIRCUITBREAKER: too many authentication failures"),
+# bloqueando o projeto por vários minutos. O resultado é que consertar a senha
+# não resolve na hora, porque o bloqueio persiste.
+#
+# Falhar rápido aqui protege o banco de nós mesmos e devolve a mensagem de
+# erro original, que é o que o administrador precisa ler.
+_FAILURE_BACKOFF_SECONDS = 20
+_failure_lock = threading.Lock()
+_last_failure: Optional[tuple[float, Exception]] = None
+
+
+def _note_connection_failure(exc: Exception) -> None:
+    global _last_failure
+    with _failure_lock:
+        _last_failure = (time.monotonic(), exc)
+
+
+def _clear_connection_failure() -> None:
+    global _last_failure
+    if _last_failure is not None:
+        with _failure_lock:
+            _last_failure = None
+
+
+def _recent_failure() -> Optional[Exception]:
+    """Falha recente ainda dentro da janela de espera, se houver."""
+    with _failure_lock:
+        if _last_failure is None:
+            return None
+        occurred_at, exc = _last_failure
+    if (time.monotonic() - occurred_at) >= _FAILURE_BACKOFF_SECONDS:
+        return None
+    return exc
 
 
 # --------------------------------------------------------------------------
@@ -126,10 +169,22 @@ def connect():
     """
     cfg = get_config()
 
-    if cfg.is_postgres:
-        conn = _connect_postgres(cfg.database_url)
-    else:
-        conn = _connect_sqlite(cfg.db_path)
+    recent = _recent_failure()
+    if recent is not None:
+        # Repropaga o erro original: é ele que diz o que corrigir. Trocá-lo por
+        # "aguarde" esconderia a causa justo de quem está diagnosticando.
+        raise recent
+
+    try:
+        if cfg.is_postgres:
+            conn = _connect_postgres(cfg.database_url)
+        else:
+            conn = _connect_sqlite(cfg.db_path)
+    except Exception as exc:
+        _note_connection_failure(exc)
+        raise
+
+    _clear_connection_failure()
 
     try:
         yield conn

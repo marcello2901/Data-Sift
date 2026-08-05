@@ -74,14 +74,54 @@ def _boot() -> None:
             st.markdown("**Erro retornado pelo banco:**")
             st.code(f"{type(exc).__name__}: {exc}")
 
-            st.caption(
-                "Causas mais comuns, em ordem: driver ausente (falta reiniciar "
-                "o app após atualizar o requirements.txt); marcador "
-                "[YOUR-PASSWORD] não substituído; porta 5432 em vez de 6543; "
-                "senha com caractere especial que precisa de codificação URL "
-                "(@ vira %40, # vira %23); projeto Supabase pausado por "
-                "inatividade."
-            )
+            texto = str(exc).lower()
+
+            if "circuitbreaker" in texto or "too many authentication failures" in texto:
+                st.warning(
+                    "**O Supabase bloqueou temporariamente novas conexões** "
+                    "após seguidas falhas de autenticação. Duas coisas "
+                    "precisam acontecer, nesta ordem:\n\n"
+                    "1. **Corrija a credencial.** No pooler, o usuário tem de "
+                    "ser `postgres.<referência-do-projeto>` — não apenas "
+                    "`postgres`. Confira o campo *Destino* acima: se ele "
+                    "mostra `postgres@…` sem o ponto e o código do projeto, é "
+                    "essa a causa. Copie de novo a string do **Transaction "
+                    "pooler**, que já vem com o usuário correto.\n"
+                    "2. **Espere o bloqueio expirar** — normalmente de 5 a 30 "
+                    "minutos. Enquanto ele durar, nem a credencial certa "
+                    "conecta. Corrigir os Secrets agora e voltar depois é o "
+                    "caminho mais rápido."
+                )
+            elif "password authentication failed" in texto or "auth" in texto:
+                st.warning(
+                    "**Falha de autenticação.** Confira o campo *Destino* "
+                    "acima: no pooler do Supabase o usuário precisa ter a "
+                    "forma `postgres.<referência-do-projeto>`, e a senha é a "
+                    "do banco (definida ao criar o projeto), não a da sua "
+                    "conta Supabase. Se não a tiver, redefina em "
+                    "*Project Settings → Database → Reset database password*."
+                )
+            elif "could not translate host" in texto or "name or service not known" in texto:
+                st.warning(
+                    "**O endereço do servidor não foi encontrado.** Confira se "
+                    "o host foi copiado por inteiro e sem espaços."
+                )
+            elif "timeout" in texto or "timed out" in texto:
+                st.warning(
+                    "**Tempo esgotado ao conectar.** Costuma indicar projeto "
+                    "Supabase pausado por inatividade (o plano gratuito pausa "
+                    "após 7 dias) ou uso da conexão direta na porta 5432, que "
+                    "só responde em IPv6. Verifique o estado do projeto no "
+                    "painel do Supabase."
+                )
+            else:
+                st.caption(
+                    "Causas mais comuns: driver ausente (falta reiniciar o app "
+                    "após atualizar o requirements.txt); marcador "
+                    "[YOUR-PASSWORD] não substituído; porta 5432 em vez de "
+                    "6543; senha com caractere especial que precisa de "
+                    "codificação URL (@ vira %40, # vira %23)."
+                )
         st.stop()
 
 
