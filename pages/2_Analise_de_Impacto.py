@@ -41,6 +41,107 @@ try:
 except Exception:
     pass
 
+# --------------------------------------------------------------------------- #
+# PORTÃO DE ACESSO
+#
+# Cada arquivo em pages/ é uma rota pública independente no Streamlit: esta
+# página roda inteira para quem digitar o endereço, sem passar pelo app.py.
+# A verificação vem antes de qualquer leitura de arquivo ou consulta.
+# --------------------------------------------------------------------------- #
+from security import audit, ratelimit, ui as security_ui  # noqa: E402
+from security.guard import hide_admin_nav, require_login  # noqa: E402
+from security.models import PERM_DATA_EXPORT, PERM_DATA_UPLOAD  # noqa: E402
+
+_user = require_login(page_name="Análise de Impacto")
+hide_admin_nav(_user)
+security_ui.render_account_sidebar(_user)
+
+# Anexos (JPG/PNG/PDF) não passam por validate_upload, que só cobre planilhas.
+# Estes tetos existem porque os anexos vão inteiros para dentro do PDF gerado:
+# sem limite, alguns arquivos grandes esgotam a memória do processo — que no
+# Streamlit Community Cloud é compartilhado com todos os outros laboratórios.
+MAX_ANEXOS = 20
+MAX_ANEXO_MB = 15
+MAX_ANEXOS_TOTAL_MB = 60
+
+_ASSINATURAS_ANEXO = {
+    b"\xff\xd8\xff": "jpg",       # JPEG
+    b"\x89PNG\r\n\x1a\n": "png",  # PNG
+    b"%PDF-": "pdf",              # PDF
+}
+
+
+def _checar_anexos(arquivos) -> list:
+    """
+    Valida os anexos: quantidade, tamanho e assinatura real do arquivo.
+
+    A checagem de assinatura importa porque estes bytes são embutidos no PDF
+    final: um arquivo que se diz PNG mas é outra coisa vira conteúdo arbitrário
+    dentro de um documento que o laboratório trata como comprovante assinado.
+    """
+    arquivos = list(arquivos or [])
+    if not arquivos:
+        return []
+
+    if not _user.has_permission(PERM_DATA_UPLOAD):
+        st.error("Seu perfil é somente leitura e não permite enviar arquivos.")
+        st.stop()
+
+    _rate = ratelimit.check_upload(_user.id)
+    if not _rate.allowed:
+        st.error(f"Muitos envios seguidos. Aguarde {_rate.retry_after_human}.")
+        st.stop()
+
+    if len(arquivos) > MAX_ANEXOS:
+        st.error(f"São aceitos no máximo {MAX_ANEXOS} anexos; você enviou {len(arquivos)}.")
+        st.stop()
+
+    total = 0
+    for anexo in arquivos:
+        dados = anexo.getvalue()
+        total += len(dados)
+
+        if len(dados) > MAX_ANEXO_MB * 1024 * 1024:
+            st.error(f"O anexo **{anexo.name}** passa de {MAX_ANEXO_MB} MB.")
+            st.stop()
+
+        if not any(dados.startswith(magica) for magica in _ASSINATURAS_ANEXO):
+            audit.record(audit.UPLOAD_REJECTED, audit.OUTCOME_DENIED, actor_id=_user.id,
+                         actor_email=_user.email, org_id=_user.org_id,
+                         detail={"motivo": "assinatura_invalida"})
+            st.error(
+                f"O anexo **{anexo.name}** não é um JPG, PNG ou PDF válido — "
+                "o conteúdo não corresponde à extensão."
+            )
+            st.stop()
+
+    if total > MAX_ANEXOS_TOTAL_MB * 1024 * 1024:
+        st.error(
+            f"Os anexos somam {total / 1024 / 1024:.0f} MB e o limite total é "
+            f"{MAX_ANEXOS_TOTAL_MB} MB."
+        )
+        st.stop()
+
+    audit.record(audit.DATA_UPLOADED, audit.OUTCOME_SUCCESS, actor_id=_user.id,
+                 actor_email=_user.email, org_id=_user.org_id, target="anexos",
+                 detail={"quantidade": len(arquivos), "total_kb": total // 1024})
+    return arquivos
+
+
+def _pode_exportar() -> bool:
+    if _user.has_permission(PERM_DATA_EXPORT):
+        return True
+    st.caption("🔒 Seu perfil é somente leitura: o download está desabilitado.")
+    return False
+
+
+def _registrar_download(nome: str, linhas: int = 0) -> None:
+    from security.sanitize import safe_filename
+
+    audit.record(audit.DATA_EXPORTED, audit.OUTCOME_SUCCESS, actor_id=_user.id,
+                 actor_email=_user.email, org_id=_user.org_id,
+                 target=safe_filename(nome), detail={"linhas": int(linhas or 0)})
+
 st.markdown(
     f"""
     <style>
@@ -568,7 +669,7 @@ with st.container(border=True):
         help="Prints ou relatórios do equipamento/sistema com os resultados que você "
              "vai digitar nas tabelas abaixo. Pode enviar **vários arquivos**: cada um "
              "entra em página nova no PDF baixado, na ordem em que aparecem aqui.")
-    arqs_brutos = list(arqs_brutos or [])
+    arqs_brutos = _checar_anexos(arqs_brutos)
     if arqs_brutos:
         _total_kb = sum(len(a.getvalue()) for a in arqs_brutos) / 1024
         st.caption(f"📎 **{len(arqs_brutos)} arquivo(s)** ({_total_kb:,.0f} KB no total) — "
@@ -879,16 +980,21 @@ _data_arq = (data_problema.strftime("%d-%m-%Y") if data_problema
 _nome_arq = re.sub(r'[\\/:*?"<>|]+', "-",
                    f"Análise de Impacto {equip_sel} - {_data_arq}").strip()
 
+if not _pode_exportar():
+    st.stop()
+
 d1, d2, d3 = st.columns(3)
 with d1:
-    st.download_button("⬇️ Baixar (Excel)",
-                       data=to_excel(export, cols_2dec=["Erro total %", "Resultado 1", "Resultado 2"]),
-                       file_name=f"{_nome_arq}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if st.download_button("⬇️ Baixar (Excel)",
+                          data=to_excel(export, cols_2dec=["Erro total %", "Resultado 1", "Resultado 2"]),
+                          file_name=f"{_nome_arq}.xlsx",
+                          mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"):
+        _registrar_download(f"{_nome_arq}.xlsx", len(export))
 with d2:
     csv_bytes = export.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("⬇️ Baixar (CSV)", data=csv_bytes,
-                       file_name=f"{_nome_arq}.csv", mime="text/csv")
+    if st.download_button("⬇️ Baixar (CSV)", data=csv_bytes,
+                          file_name=f"{_nome_arq}.csv", mime="text/csv"):
+        _registrar_download(f"{_nome_arq}.csv", len(export))
 with d3:
     data_prob_txt = data_problema.strftime("%d/%m/%Y") if data_problema else ""
     _anexos = [(a.name, a.getvalue()) for a in arqs_brutos]
@@ -901,8 +1007,9 @@ with d3:
                    "os anexos em imagem.")
         _pdf_bytes = gerar_pdf(tab, equip_sel, operador, data_prob_txt,
                                anexos=[a for a in _anexos if not _anexo_eh_pdf(a[0])])
-    st.download_button("⬇️ Baixar (PDF)", data=_pdf_bytes,
-                       file_name=f"{_nome_arq}.pdf", mime="application/pdf")
+    if st.download_button("⬇️ Baixar (PDF)", data=_pdf_bytes,
+                          file_name=f"{_nome_arq}.pdf", mime="application/pdf"):
+        _registrar_download(f"{_nome_arq}.pdf", len(export))
 st.caption(f"O **PDF** leva os **{len(arqs_brutos)} arquivo(s)** de dados brutos da seção 3, "
            "cada um em **página própria**, na ordem enviada. O .xlsx e o .csv contêm "
            "apenas a tabela.")

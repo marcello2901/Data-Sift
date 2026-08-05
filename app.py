@@ -15,7 +15,6 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
-import tempfile
 import os
 import shutil
 import matplotlib.pyplot as plt
@@ -25,9 +24,64 @@ import base64
 # --- PAGE CONFIGURATION & THEME ---
 st.set_page_config(
     page_title="DataSift",
-    page_icon="favicon.png", 
-    layout="wide" 
+    page_icon="favicon.png",
+    layout="wide"
 )
+
+# --- CAMADA DE SEGURANÇA ---
+# Ver security/__init__.py para o desenho completo. O acesso é barrado em
+# main(), antes de qualquer leitura de arquivo.
+from security import audit, ratelimit, sanitize, tenancy, ui as security_ui  # noqa: E402
+from security.guard import hide_admin_nav, require_login, require_permission  # noqa: E402
+from security.models import PERM_DATA_EXPORT, PERM_DATA_UPLOAD  # noqa: E402
+from security.sanitize import safe_filename  # noqa: E402
+from security.uploads import secure_tempfile, validate_upload  # noqa: E402
+
+
+def guard_processing(user) -> bool:
+    """
+    Limite de taxa para operações pesadas (filtro, estratificação, Harris-Boyd).
+
+    Cada execução varre a planilha inteira. Como o Streamlit Community Cloud
+    roda um processo compartilhado por todos os laboratórios, uma aba deixada
+    clicando degrada o desempenho de todo mundo — não só de quem clicou.
+    """
+    decision = ratelimit.check_processing(user.id)
+    if decision.allowed:
+        return True
+    audit.record(audit.RATE_LIMITED, audit.OUTCOME_DENIED, actor_id=user.id,
+                 actor_email=user.email, org_id=user.org_id, target="processing")
+    st.error(
+        f"Muitos processamentos seguidos. Aguarde {decision.retry_after_human} "
+        "e tente novamente."
+    )
+    return False
+
+
+def can_export(user) -> bool:
+    """Permissão de exportação. O perfil 'somente leitura' analisa, mas não baixa."""
+    if user.has_permission(PERM_DATA_EXPORT):
+        return True
+    st.caption(
+        "🔒 Seu perfil é somente leitura: os resultados aparecem na tela, mas "
+        "o download está desabilitado."
+    )
+    return False
+
+
+def note_download(user, file_name: str, rows: int = 0) -> None:
+    """
+    Registra a exportação na auditoria.
+
+    Saber quem tirou dado clínico do sistema, quando e em que volume é o
+    registro mais importante que existe aqui: é ele que transforma um
+    vazamento em algo investigável em vez de invisível.
+    """
+    audit.record(
+        audit.DATA_EXPORTED, audit.OUTCOME_SUCCESS, actor_id=user.id,
+        actor_email=user.email, org_id=user.org_id,
+        target=safe_filename(file_name), detail={"linhas": int(rows or 0)},
+    )
 
 # Color Palette Based on Reference Image
 COLOR_PRIMARY = "#073B4C"     # Dark Teal
@@ -38,7 +92,12 @@ COLOR_CARD_BG = "#FFFFFF"     # Pure White Card Background
 
 # Função para gerar o Help Option Icon dinamicamente com texto
 def make_help_icon(tooltip_text):
-    return f"<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px; margin-left: 5px;' title='{tooltip_text}'>?</span>"
+    # O texto vai para dentro de um atributo HTML. Hoje todos os chamadores
+    # passam literais, mas escapar aqui garante que continuar assim não dependa
+    # de ninguém lembrar: uma aspa no texto encerraria o atributo title e
+    # permitiria emendar outro, como onmouseover.
+    from security.sanitize import escape_attr
+    return f"<span style='cursor: help; color: #118AB2; font-size: 0.85em; font-weight: bold; background: #E0F7FA; border-radius: 50%; padding: 0px 5px; margin-left: 5px;' title='{escape_attr(tooltip_text)}'>?</span>"
 
 HELP_ICON_PLATEAU = make_help_icon('Draws horizontal lines based on stratification cuts.')
 
@@ -243,57 +302,92 @@ def get_data_processor():
     return DataProcessor()
 
 class DataProcessor:
-    OPERATOR_MAP = {'=': '=', '==': '=', 'Is not equal to': '!=', '≥': '>=', '≤': '<=', 'is equal to': '=', 'Not equal to': '!='}
+    """
+    Motor de filtragem/estratificação sobre DuckDB.
+
+    Segurança: este motor monta SQL por concatenação de texto. Todo
+    identificador que entra na consulta passa antes por
+    ``sanitize.safe_column_ref``, que confere o nome contra as colunas reais do
+    DataFrame e só então o cita com escape correto. Todo operador passa por
+    ``sanitize.normalize_operator``, que trabalha com lista de permissão.
+
+    O motivo: os nomes das colunas vêm do cabeçalho da planilha enviada, que é
+    texto escolhido por quem monta o arquivo — não é estrutura confiável. Uma
+    coluna chamada ``Idade" OR 1=1 --`` escapava da interpolação ``f'"{col}"'``
+    usada antes e reescrevia a cláusula WHERE.
+    """
 
     def _build_single_sql_cond(self, col: str, op: str, val: Any) -> str:
-        if not op: return "FALSE"
-        op = self.OPERATOR_MAP.get(op, op)
-        if str(val).lower() == 'empty':
-            if op in ('=', '=='): return f"({col} IS NULL OR TRIM(CAST({col} AS VARCHAR)) = '')"
-            if op == '!=': return f"({col} IS NOT NULL AND TRIM(CAST({col} AS VARCHAR)) != '')"
+        """``col`` já deve chegar citado por ``sanitize.safe_column_ref``."""
+        if not col:
             return "FALSE"
-        try:
-            v_num = float(str(val).replace(',', '.'))
-            safe_cast = f"TRY_CAST(REPLACE(CAST({col} AS VARCHAR), ',', '.') AS DOUBLE)"
-            return f"({safe_cast} IS NOT NULL AND {safe_cast} {op} {v_num})"
-        except ValueError:
-            v_str = str(val).replace("'", "''").lower().strip()
-            return f"(CAST({col} AS VARCHAR) IS NOT NULL AND LOWER(TRIM(CAST({col} AS VARCHAR))) {op} '{v_str}')"
 
-    def _create_main_sql(self, f: Dict, col: str) -> str:
+        sql_op = sanitize.normalize_operator(op)
+        if sql_op is None:
+            # Operador fora da lista de permissão: não é repassado ao motor.
+            return "FALSE"
+
+        if str(val).strip().lower() == 'empty':
+            if sql_op == '=': return f"({col} IS NULL OR TRIM(CAST({col} AS VARCHAR)) = '')"
+            if sql_op == '!=': return f"({col} IS NOT NULL AND TRIM(CAST({col} AS VARCHAR)) != '')"
+            return "FALSE"
+
+        v_num = sanitize.safe_number(val)
+        if v_num is not None:
+            safe_cast = f"TRY_CAST(REPLACE(CAST({col} AS VARCHAR), ',', '.') AS DOUBLE)"
+            return f"({safe_cast} IS NOT NULL AND {safe_cast} {sql_op} {v_num})"
+
+        try:
+            v_str = sanitize.quote_literal(str(val).lower().strip())
+        except sanitize.SanitizationError:
+            return "FALSE"
+        return f"(CAST({col} AS VARCHAR) IS NOT NULL AND LOWER(TRIM(CAST({col} AS VARCHAR))) {sql_op} {v_str})"
+
+    def _create_main_sql(self, f: Dict, col: str, allowed_columns) -> str:
         op1, val1 = f.get('p_op1'), f.get('p_val1')
-        safe_col = f'"{col}"'
+        safe_col = sanitize.safe_column_ref(col, allowed_columns)
+        if safe_col is None:
+            # Coluna que não existe no arquivo carregado. Antes isso virava um
+            # identificador arbitrário dentro da consulta.
+            return "FALSE"
+
         if not f.get('p_expand'):
             return self._build_single_sql_cond(safe_col, op1, val1)
-        op_central = f.get('p_op_central', '').upper()
+
+        op_central = sanitize.normalize_logical_operator(f.get('p_op_central', ''))
+        if op_central is None:
+            return "FALSE"
+
         op2, val2 = f.get('p_op2'), f.get('p_val2')
         if op_central == 'BETWEEN':
-            try:
-                v1_num = float(str(val1).replace(',', '.'))
-                v2_num = float(str(val2).replace(',', '.'))
-                min_v, max_v = sorted([v1_num, v2_num])
-                safe_cast = f"TRY_CAST(REPLACE(CAST({safe_col} AS VARCHAR), ',', '.') AS DOUBLE)"
-                return f"({safe_cast} IS NOT NULL AND {safe_cast} BETWEEN {min_v} AND {max_v})"
-            except ValueError: return "FALSE"
+            v1_num = sanitize.safe_number(val1)
+            v2_num = sanitize.safe_number(val2)
+            if v1_num is None or v2_num is None:
+                return "FALSE"
+            min_v, max_v = sorted([v1_num, v2_num])
+            safe_cast = f"TRY_CAST(REPLACE(CAST({safe_col} AS VARCHAR), ',', '.') AS DOUBLE)"
+            return f"({safe_cast} IS NOT NULL AND {safe_cast} BETWEEN {min_v} AND {max_v})"
+
         cond1 = self._build_single_sql_cond(safe_col, op1, val1)
         cond2 = self._build_single_sql_cond(safe_col, op2, val2)
         return f"({cond1} {op_central} {cond2})"
 
-    def _create_conditional_sql(self, f: Dict, global_config: Dict) -> str:
+    def _create_conditional_sql(self, f: Dict, global_config: Dict, allowed_columns) -> str:
         if not f.get('c_check'): return "TRUE"
         conds = []
         col_idade = global_config.get('coluna_idade')
         if f.get('c_idade_check') and col_idade:
-            safe_idade = f'"{col_idade}"'
-            op1, val1 = f.get('c_idade_op1'), f.get('c_idade_val1')
-            if op1 and val1: conds.append(self._build_single_sql_cond(safe_idade, op1, val1))
-            op2, val2 = f.get('c_idade_op2'), f.get('c_idade_val2')
-            if op2 and val2: conds.append(self._build_single_sql_cond(safe_idade, op2, val2))
+            safe_idade = sanitize.safe_column_ref(col_idade, allowed_columns)
+            if safe_idade:
+                op1, val1 = f.get('c_idade_op1'), f.get('c_idade_val1')
+                if op1 and val1: conds.append(self._build_single_sql_cond(safe_idade, op1, val1))
+                op2, val2 = f.get('c_idade_op2'), f.get('c_idade_val2')
+                if op2 and val2: conds.append(self._build_single_sql_cond(safe_idade, op2, val2))
         col_sexo = global_config.get('coluna_sexo')
         if f.get('c_sexo_check') and col_sexo:
             val_sexo = f.get('c_sexo_val')
-            if val_sexo:
-                safe_sexo = f'"{col_sexo}"'
+            safe_sexo = sanitize.safe_column_ref(col_sexo, allowed_columns)
+            if val_sexo and safe_sexo:
                 conds.append(self._build_single_sql_cond(safe_sexo, '=', val_sexo))
         return " AND ".join(conds) if conds else "TRUE"
 
@@ -315,13 +409,10 @@ class DataProcessor:
 
             main_conds = []
             for sub_col in cols_to_check:
-                if sub_col in df_input.columns:
-                    main_conds.append(self._create_main_sql(f_config, sub_col))
-                else:
-                    main_conds.append("FALSE")
+                main_conds.append(self._create_main_sql(f_config, sub_col, df_input.columns))
 
             combined_main_sql = " AND ".join([f"({c})" for c in main_conds]) if main_conds else "FALSE"
-            cond_sql = self._create_conditional_sql(f_config, global_config)
+            cond_sql = self._create_conditional_sql(f_config, global_config, df_input.columns)
             rule_sql = f"({combined_main_sql}) AND ({cond_sql})"
             exclusion_clauses.append(f"NOT ({rule_sql})")
 
@@ -351,7 +442,16 @@ class DataProcessor:
             return filtered_df
         except Exception as e:
             con.close()
-            st.session_state.filter_error = f"SQL Processing Error: {e}"
+            # A mensagem crua expunha a consulta montada, nomes de coluna e
+            # caminhos internos. O detalhe vai para a auditoria; o usuário
+            # recebe um código para citar ao administrador.
+            message, correlation_id = sanitize.redact_error(e)
+            audit.record(
+                "analysis.error", audit.OUTCOME_FAILURE,
+                target="apply_filters",
+                detail={"correlacao": correlation_id, "erro": sanitize.error_fingerprint(e)},
+            )
+            st.session_state.filter_error = message
             return df_input
     
     def apply_stratification(self, df_input: pd.DataFrame, strata_config: Dict, global_config: Dict, progress_bar) -> Dict[str, pd.DataFrame]:
@@ -368,8 +468,17 @@ class DataProcessor:
             st.session_state.stratification_error = f"Sex/Gender column '{col_sexo}' not found or not mapped in Global Settings."
             return {}
 
-        safe_idade = f'"{col_idade}"' if col_idade else ""
-        safe_sexo = f'"{col_sexo}"' if col_sexo else ""
+        # Identificadores conferidos contra as colunas reais antes de entrarem
+        # na consulta — ver docstring da classe.
+        safe_idade = sanitize.safe_column_ref(col_idade, df_input.columns) if col_idade else ""
+        safe_sexo = sanitize.safe_column_ref(col_sexo, df_input.columns) if col_sexo else ""
+
+        if age_strata and not safe_idade:
+            st.session_state.stratification_error = "Age column is not valid for this spreadsheet."
+            return {}
+        if sex_strata and not safe_sexo:
+            st.session_state.stratification_error = "Sex/Gender column is not valid for this spreadsheet."
+            return {}
 
         final_strata_to_process = []
         if not age_strata and sex_strata:
@@ -417,7 +526,13 @@ class DataProcessor:
                     stratum_df.drop(columns=['_temp_row_id'], inplace=True)
                     generated_dfs[filename] = stratum_df
             except Exception as e:
-                st.session_state.stratification_error = f"SQL error while generating {filename}: {e}"
+                message, correlation_id = sanitize.redact_error(e)
+                audit.record(
+                    "analysis.error", audit.OUTCOME_FAILURE,
+                    target="apply_stratification",
+                    detail={"correlacao": correlation_id, "erro": sanitize.error_fingerprint(e)},
+                )
+                st.session_state.stratification_error = message
 
         con.close()
         progress_bar.progress(1.0, text="Stratification complete!")
@@ -468,52 +583,73 @@ class DataProcessor:
 # logo após a leitura, então uma entrada antiga nunca volta a ser reaproveitada —
 # sem limite, cada arquivo já lido ficava guardado inteiro na memória para sempre.
 @st.cache_data(show_spinner="Reading file...", max_entries=1)
-def _read_csv_engine(path, sep, decimal, encoding):
+def _read_csv_engine(_tenant, path, sep, decimal, encoding):
     """
     Lê CSV com PyArrow (rápido). Se o PyArrow falhar — por exemplo em linhas/campos
     muito grandes, que geram 'straddling object straddles two block boundaries' —,
     refaz a leitura com o parser C padrão do pandas, que não tem essa limitação de
     blocos. Colunas, valores e dtypes resultantes são equivalentes aos do PyArrow.
+
+    ``_tenant`` não é usado no corpo: existe só para entrar na chave do cache.
+    O cache do Streamlit é global do processo, não por sessão — sem essa chave,
+    a separação entre laboratórios dependeria de os demais argumentos nunca
+    coincidirem, o que é garantia acidental, não estrutural.
     """
     try:
         return pd.read_csv(path, sep=sep, decimal=decimal, encoding=encoding, engine='pyarrow')
     except Exception:
         return pd.read_csv(path, sep=sep, decimal=decimal, encoding=encoding, engine='c', low_memory=False)
         
-def load_dataframe(uploaded_file):
+def load_dataframe(uploaded_file, user=None):
+    """
+    Lê a planilha enviada.
+
+    Segurança em relação à versão anterior:
+
+    - Os arquivos temporários usam ``secure_tempfile``, que apaga no ``finally``.
+      Antes, uma exceção no meio da leitura pulava o ``os.remove`` e deixava a
+      planilha clínica no disco do servidor por tempo indeterminado.
+    - O sufixo do temporário é higienizado — antes vinha direto do nome enviado.
+    - A mensagem de erro não expõe mais a exceção crua.
+    - O cache de leitura é separado por laboratório (``tenant_cache_key``).
+
+    ``validate_upload`` já rodou no chamador; aqui tratamos apenas o resto.
+    """
     if uploaded_file is None: return None
+
+    tenant = tenancy.tenant_cache_key(user)
+
     try:
         file_name = uploaded_file.name.lower()
         uploaded_file.seek(0)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
-            shutil.copyfileobj(uploaded_file, tmp_file)
-            tmp_path = tmp_file.name
 
-        df = None
-        if file_name.endswith('.zip'):
-            with zipfile.ZipFile(tmp_path) as z:
-                valid_files = [f for f in z.namelist() if not f.startswith('__MACOSX/') and 
-                               (f.lower().endswith('.csv') or f.lower().endswith(('.xlsx', '.xls')))]
-                if not valid_files:
-                    st.error("The ZIP file contains no valid CSV or Excel files.")
-                    os.remove(tmp_path)
-                    return None
-                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(valid_files[0])[1]) as inner_tmp:
-                    inner_tmp.write(z.read(valid_files[0]))
-                    inner_path = inner_tmp.name
-                inner_filename = valid_files[0].lower()
-                if inner_filename.endswith('.csv'):
-                    try: df = _read_csv_engine(inner_path, ';', ',', 'latin-1')
-                    except Exception: df = _read_csv_engine(inner_path, ',', '.', 'utf-8')
-                else: df = pd.read_excel(inner_path, engine='openpyxl')
-                os.remove(inner_path)
-        elif file_name.endswith('.csv'):
-            try: df = _read_csv_engine(tmp_path, ';', ',', 'latin-1')
-            except Exception: df = _read_csv_engine(tmp_path, ',', '.', 'utf-8')
-        else:
-            df = pd.read_excel(tmp_path, engine='openpyxl')
+        with secure_tempfile(os.path.splitext(file_name)[1]) as tmp_path:
+            with open(tmp_path, 'wb') as tmp_file:
+                shutil.copyfileobj(uploaded_file, tmp_file)
 
-        if os.path.exists(tmp_path): os.remove(tmp_path)
+            df = None
+            if file_name.endswith('.zip'):
+                with zipfile.ZipFile(tmp_path) as z:
+                    valid_files = [f for f in z.namelist() if not f.startswith('__MACOSX/') and
+                                   (f.lower().endswith('.csv') or f.lower().endswith(('.xlsx', '.xls')))]
+                    if not valid_files:
+                        st.error("The ZIP file contains no valid CSV or Excel files.")
+                        return None
+
+                    inner_name = valid_files[0]
+                    with secure_tempfile(os.path.splitext(inner_name)[1]) as inner_path:
+                        with open(inner_path, 'wb') as inner_tmp:
+                            inner_tmp.write(z.read(inner_name))
+                        if inner_name.lower().endswith('.csv'):
+                            try: df = _read_csv_engine(tenant, inner_path, ';', ',', 'latin-1')
+                            except Exception: df = _read_csv_engine(tenant, inner_path, ',', '.', 'utf-8')
+                        else:
+                            df = pd.read_excel(inner_path, engine='openpyxl')
+            elif file_name.endswith('.csv'):
+                try: df = _read_csv_engine(tenant, tmp_path, ';', ',', 'latin-1')
+                except Exception: df = _read_csv_engine(tenant, tmp_path, ',', '.', 'utf-8')
+            else:
+                df = pd.read_excel(tmp_path, engine='openpyxl')
 
         if df is not None:
             for col in df.select_dtypes(include=['object']).columns:
@@ -522,10 +658,17 @@ def load_dataframe(uploaded_file):
                 try:
                     if col != st.session_state.col_dados and df[col].nunique() / len(df[col]) < 0.5:
                         df[col] = df[col].astype('category')
-                except Exception: pass 
+                except Exception: pass
         return df
     except Exception as e:
-        st.error(f"Error reading file: {e}")
+        message, correlation_id = sanitize.redact_error(e)
+        audit.record(
+            "data.read_error", audit.OUTCOME_FAILURE,
+            actor_id=user.id if user else None,
+            org_id=user.org_id if user else None,
+            detail={"correlacao": correlation_id, "erro": sanitize.error_fingerprint(e)},
+        )
+        st.error(f"Não foi possível ler o arquivo. {message}")
         return None
 
 def remove_outliers_tukey(df, col_dados, iterations=5, multiplier=2.0):
@@ -889,6 +1032,12 @@ def plot_dispersion_chart(df, col_idade, col_dados, col_sexo, intervalo, chart_t
 
 # Os bytes do arquivo exportado são grandes; guardar só os mais recentes evita
 # acumular na memória todas as exportações já feitas na sessão do servidor.
+#
+# Multilocação: o cache do Streamlit é global do processo, mas estas funções são
+# indexadas pelo próprio DataFrame. Colidir a chave exige dados idênticos, que
+# produzem saída idêntica — nada atravessa entre laboratórios. Ver a regra em
+# security/tenancy.py. Se algum dia a chave passar a ser uma referência (um id,
+# um nome de arquivo), aí é obrigatório incluir tenancy.tenant_cache_key().
 @st.cache_data(show_spinner="Preparing file for export...", max_entries=2)
 def to_excel(df):
     output = io.BytesIO()
@@ -1040,8 +1189,22 @@ def draw_reference_limits_matrix(sex_options):
         st.rerun()
 
 def main():
+    # --- PORTÃO DE ACESSO ---
+    # Primeira instrução da função, antes de qualquer leitura de arquivo ou
+    # consulta. require_login() encerra o script com st.stop() quando não há
+    # sessão válida, então nada abaixo executa para quem não está autenticado.
+    user = require_login(page_name="DataSift")
+
+    hide_admin_nav(user)
+    security_ui.render_account_sidebar(user)
+    security_ui.render_security_notices(user)
+
+    # Painel da própria conta (senha, 2FA, sessões) substitui o conteúdo normal.
+    if security_ui.render_account_panel(user):
+        return
+
     if 'lgpd_accepted' not in st.session_state: st.session_state.lgpd_accepted = False
-    
+
     # --- ENTER PRIVACY COMPLIANCE SCREEN ---
     if not st.session_state.lgpd_accepted:
         if logo_base64:
@@ -1091,15 +1254,53 @@ def main():
             if 'analysis_results' in st.session_state: del st.session_state['analysis_results']
             st.session_state.confirm_stratify = False
             
-        uploaded_file = st.file_uploader("Select spreadsheet", type=['csv', 'xlsx', 'xls', 'zip'], on_change=reset_results_on_upload, key="file_uploader_widget", label_visibility="collapsed")
+        can_upload = user.has_permission(PERM_DATA_UPLOAD)
+        if not can_upload:
+            st.info(
+                "Seu perfil é somente leitura: você pode analisar dados já "
+                "carregados, mas não enviar novas planilhas."
+            )
+
+        uploaded_file = st.file_uploader(
+            "Select spreadsheet", type=['csv', 'xlsx', 'xls', 'zip'],
+            on_change=reset_results_on_upload, key="file_uploader_widget",
+            label_visibility="collapsed", disabled=not can_upload,
+        )
 
         if "dados_salvos" not in st.session_state: st.session_state.dados_salvos = None
         if "id_arquivo_atual" not in st.session_state: st.session_state.id_arquivo_atual = None
 
         if uploaded_file is not None:
             if st.session_state.id_arquivo_atual != uploaded_file.file_id:
-                st.session_state.dados_salvos = load_dataframe(uploaded_file)
+                # Ordem: permissão → limite de taxa → validação do arquivo →
+                # leitura. A leitura é a etapa cara e só acontece por último.
+                if not require_permission(user, PERM_DATA_UPLOAD, "upload"):
+                    st.error("Seu perfil não permite enviar arquivos.")
+                    st.stop()
+
+                rate = ratelimit.check_upload(user.id)
+                if not rate.allowed:
+                    audit.record(audit.RATE_LIMITED, audit.OUTCOME_DENIED, actor_id=user.id,
+                                 actor_email=user.email, org_id=user.org_id, target="upload")
+                    st.error(f"Muitos envios seguidos. Aguarde {rate.retry_after_human}.")
+                    st.stop()
+
+                check = validate_upload(uploaded_file)
+                if not check.ok:
+                    audit.record(audit.UPLOAD_REJECTED, audit.OUTCOME_DENIED, actor_id=user.id,
+                                 actor_email=user.email, org_id=user.org_id,
+                                 target=check.safe_name, detail={"motivo": check.reason})
+                    st.error(check.reason)
+                    st.stop()
+
+                st.session_state.dados_salvos = load_dataframe(uploaded_file, user)
                 st.session_state.id_arquivo_atual = uploaded_file.file_id
+
+                rows = 0 if st.session_state.dados_salvos is None else len(st.session_state.dados_salvos)
+                audit.record(audit.DATA_UPLOADED, audit.OUTCOME_SUCCESS, actor_id=user.id,
+                             actor_email=user.email, org_id=user.org_id,
+                             target=check.safe_name,
+                             detail={"linhas": rows, "tamanho_kb": check.size_bytes // 1024})
         else:
             st.session_state.dados_salvos = None
             st.session_state.id_arquivo_atual = None
@@ -1155,6 +1356,8 @@ def main():
 
         if st.button("Generate Filtered Sheet", type="primary", use_container_width=True, disabled=not is_ready_for_processing):
             if df is None: st.error("Please upload a spreadsheet in Global Settings first.")
+            elif not guard_processing(user):
+                pass
             else:
                 with st.spinner("Applying filters..."):
                     progress_bar = st.progress(0, text="Initializing...")
@@ -1172,7 +1375,11 @@ def main():
                         st.session_state.filtered_df = filtered_df
                     else: st.success("No rows remaining after filters applied.")
         if 'filtered_result' in st.session_state:
-            st.download_button("⬇️ Download Final Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True, type="secondary")
+            if can_export(user):
+                clicked = st.download_button("⬇️ Download Final Filtered Sheet", data=st.session_state.filtered_result[0], file_name=st.session_state.filtered_result[1], use_container_width=True, type="secondary")
+                if clicked:
+                    note_download(user, st.session_state.filtered_result[1],
+                                  rows=len(st.session_state.get('filtered_df', [])))
 
     # --- TAB 3: ANALYSIS & STRATIFICATION ---
     with tab_stratify:
@@ -1240,7 +1447,7 @@ def main():
                         selected_sexes_for_plot = sex_options_for_plot
 
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🚀 Process Analysis & Generate Charts", type="primary", use_container_width=True):
+                if st.button("🚀 Process Analysis & Generate Charts", type="primary", use_container_width=True) and guard_processing(user):
                     with st.spinner("Processing Visual-Statistical Analysis..."):
                         p = {
                             'chart_type': chart_type,
@@ -1342,7 +1549,12 @@ def main():
                         
                         for data in res['hboyd_render_data']:
                             if res['group_by_sex_plot'] and st.session_state.col_sexo:
-                                st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {data['sex_val']}</b></p>", unsafe_allow_html=True)
+                                # sex_val vem da coluna Sexo da planilha enviada — conteúdo
+                                # controlado por quem monta o arquivo. Sem escape, um valor
+                                # como <img src=x onerror=...> executa no navegador de quem
+                                # abre a análise. unsafe_allow_html desliga a proteção do
+                                # Streamlit para todo o bloco, então o escape é por nossa conta.
+                                st.markdown(f"<hr style='border-color: rgba(7, 59, 76, 0.2); margin: 10px 0;'><p style='font-size:1.0rem; color:{COLOR_PRIMARY}; margin-bottom:2px;'><b>Sex: {sanitize.escape_html(data['sex_val'])}</b></p>", unsafe_allow_html=True)
 
                             render_mini_tabela("Harris-Boyd (Statistical approach)", data['df_possiveis_age'], data['max_age'], data['sub_df'], st.session_state.col_idade, st.session_state.col_dados)
                             render_mini_tabela(data['titulo_metodo_2'], data['cuts_ideais'], data['max_age'], data['sub_df'], st.session_state.col_idade, st.session_state.col_dados)
@@ -1463,7 +1675,7 @@ def main():
                 if st.session_state.get('confirm_stratify', False):
                     st.warning("Ensure you are stratifying the CORRECT file. Do you wish to proceed?")
                     c1, c2 = st.columns(2)
-                    if c1.button("Yes, split data", type="primary"):
+                    if c1.button("Yes, split data", type="primary") and guard_processing(user):
                         with st.spinner("Generating strata..."):
                             progress_bar = st.progress(0, text="Initializing...")
                             processor = get_data_processor()
@@ -1495,36 +1707,43 @@ def main():
                             + ", ".join(small_strata)
                         )
 
-                    # --- Single ZIP with every stratum (avoids many separate clicks) ---
-                    zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                        for filename, df_to_download in results.items():
-                            file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
-                            zf.writestr(f"{filename}.{ext}", file_bytes)
-                    zip_ts = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d_%H%M%S")
-                    st.download_button(
-                        f"⬇️ Download all {len(results)} strata (.zip)",
-                        data=zip_buffer.getvalue(),
-                        file_name=f"Stratified_Sheets_{zip_ts}.zip",
-                        mime="application/zip",
-                        use_container_width=True,
-                        type="primary",
-                        key="dl_all_strata_zip",
-                    )
+                    if can_export(user):
+                        # --- Single ZIP with every stratum (avoids many separate clicks) ---
+                        zip_buffer = io.BytesIO()
+                        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                            for filename, df_to_download in results.items():
+                                file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
+                                # safe_filename: o nome do estrato deriva de valores da
+                                # planilha (ex.: rótulo da coluna Sexo) e vira caminho
+                                # dentro do ZIP.
+                                zf.writestr(f"{safe_filename(filename)}.{ext}", file_bytes)
+                        zip_ts = datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%Y%m%d_%H%M%S")
+                        if st.download_button(
+                            f"⬇️ Download all {len(results)} strata (.zip)",
+                            data=zip_buffer.getvalue(),
+                            file_name=f"Stratified_Sheets_{zip_ts}.zip",
+                            mime="application/zip",
+                            use_container_width=True,
+                            type="primary",
+                            key="dl_all_strata_zip",
+                        ):
+                            note_download(user, f"Stratified_Sheets_{zip_ts}.zip",
+                                          rows=sum(len(d) for d in results.values()))
 
-                    # --- Individual downloads, each showing its sample size (N) ---
-                    with st.expander("Download individual strata", expanded=False):
-                        for filename, df_to_download in results.items():
-                            n = len(df_to_download)
-                            flag = "  ⚠️ N<120" if n < MIN_REF_N else ""
-                            file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
-                            st.download_button(
-                                f"📄 {filename}  ·  n={n:,}{flag}",
-                                data=file_bytes,
-                                file_name=f"{filename}.{ext}",
-                                key=f"dl_{filename}",
-                                type="secondary",
-                            )
+                        # --- Individual downloads, each showing its sample size (N) ---
+                        with st.expander("Download individual strata", expanded=False):
+                            for filename, df_to_download in results.items():
+                                n = len(df_to_download)
+                                flag = "  ⚠️ N<120" if n < MIN_REF_N else ""
+                                file_bytes = to_excel(df_to_download) if is_excel else to_csv(df_to_download)
+                                if st.download_button(
+                                    f"📄 {filename}  ·  n={n:,}{flag}",
+                                    data=file_bytes,
+                                    file_name=f"{safe_filename(filename)}.{ext}",
+                                    key=f"dl_{filename}",
+                                    type="secondary",
+                                ):
+                                    note_download(user, filename, rows=n)
         else:
             st.info("⚠️ Please upload a spreadsheet to access the analysis and stratification tools.")
         st.markdown('</div></div>', unsafe_allow_html=True)

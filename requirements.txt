@@ -9,3 +9,14 @@ seaborn
 scipy
 reportlab
 pypdf
+
+# --- Camada de segurança (pacote security/) ---
+# argon2-cffi: hash de senha Argon2id. Sem ele o sistema cai para
+#   PBKDF2-SHA256, que funciona mas resiste muito menos a ataque com GPU.
+argon2-cffi==23.1.0
+# cryptography: cifra o segredo TOTP em repouso (Fernet + HKDF).
+cryptography==42.0.8
+# psycopg: driver Postgres. Obrigatório em produção — no Streamlit Community
+#   Cloud o disco é efêmero e um SQLite local seria apagado a cada redeploy,
+#   levando junto usuários, sessões e auditoria.
+psycopg[binary]==3.1.19

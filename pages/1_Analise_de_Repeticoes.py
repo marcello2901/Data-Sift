@@ -51,6 +51,76 @@ except Exception:
     # Em app multipágina o set_page_config pode já ter sido definido; ignore.
     pass
 
+# --------------------------------------------------------------------------- #
+# PORTÃO DE ACESSO
+#
+# No Streamlit cada arquivo em pages/ é uma rota pública independente: digitar
+# o endereço desta página executa este script inteiro sem passar pelo app.py.
+# Sem esta chamada, esta página seria acessível sem login por mais protegido que
+# o resto do app estivesse. Ela vem antes de qualquer leitura de arquivo.
+# --------------------------------------------------------------------------- #
+from security import audit, ratelimit, ui as security_ui  # noqa: E402
+from security.guard import hide_admin_nav, require_login  # noqa: E402
+from security.models import PERM_DATA_EXPORT, PERM_DATA_UPLOAD  # noqa: E402
+from security.uploads import secure_tempfile, validate_upload  # noqa: E402
+
+_user = require_login(page_name="Análise de Repetições")
+hide_admin_nav(_user)
+security_ui.render_account_sidebar(_user)
+
+
+def _checar_upload(arquivo, rotulo: str = "planilha"):
+    """
+    Permissão → limite de taxa → validação do arquivo. Interrompe se reprovar.
+
+    A validação (assinatura do arquivo, tamanho, bomba de descompressão) roda
+    antes de ``carregar_planilha``, que é a etapa cara e a que efetivamente
+    abre o conteúdo.
+    """
+    if arquivo is None:
+        return None
+
+    if not _user.has_permission(PERM_DATA_UPLOAD):
+        st.error("Seu perfil é somente leitura e não permite enviar arquivos.")
+        st.stop()
+
+    _rate = ratelimit.check_upload(_user.id)
+    if not _rate.allowed:
+        audit.record(audit.RATE_LIMITED, audit.OUTCOME_DENIED, actor_id=_user.id,
+                     actor_email=_user.email, org_id=_user.org_id, target="upload")
+        st.error(f"Muitos envios seguidos. Aguarde {_rate.retry_after_human}.")
+        st.stop()
+
+    _check = validate_upload(arquivo)
+    if not _check.ok:
+        audit.record(audit.UPLOAD_REJECTED, audit.OUTCOME_DENIED, actor_id=_user.id,
+                     actor_email=_user.email, org_id=_user.org_id,
+                     target=_check.safe_name, detail={"motivo": _check.reason})
+        st.error(_check.reason)
+        st.stop()
+
+    audit.record(audit.DATA_UPLOADED, audit.OUTCOME_SUCCESS, actor_id=_user.id,
+                 actor_email=_user.email, org_id=_user.org_id,
+                 target=_check.safe_name,
+                 detail={"contexto": rotulo, "tamanho_kb": _check.size_bytes // 1024})
+    return arquivo
+
+
+def _pode_exportar() -> bool:
+    """Perfil somente leitura vê o resultado na tela, mas não baixa arquivo."""
+    if _user.has_permission(PERM_DATA_EXPORT):
+        return True
+    st.caption("🔒 Seu perfil é somente leitura: o download está desabilitado.")
+    return False
+
+
+def _registrar_download(nome: str, linhas: int = 0) -> None:
+    from security.sanitize import safe_filename
+
+    audit.record(audit.DATA_EXPORTED, audit.OUTCOME_SUCCESS, actor_id=_user.id,
+                 actor_email=_user.email, org_id=_user.org_id,
+                 target=safe_filename(nome), detail={"linhas": int(linhas or 0)})
+
 st.markdown(
     f"""
     <style>
@@ -268,13 +338,15 @@ def carregar_planilha(conteudo: bytes, nome: str) -> pd.DataFrame:
                            and f.lower().endswith((".csv", ".xlsx", ".xls"))]
                 if not validos:
                     raise ValueError("O ZIP não contém CSV ou Excel válidos.")
-                with tempfile.NamedTemporaryFile(delete=False,
-                                                 suffix=os.path.splitext(validos[0])[1]) as inner:
-                    inner.write(z.read(validos[0]))
-                    inner_path = inner.name
-                df = (_ler_csv(inner_path) if validos[0].lower().endswith(".csv")
-                      else pd.read_excel(inner_path, engine="openpyxl"))
-                os.remove(inner_path)
+                # secure_tempfile apaga no finally. Com NamedTemporaryFile
+                # (delete=False) + os.remove no fim do bloco, uma falha de
+                # leitura — planilha corrompida, coluna estranha — pulava a
+                # remoção e deixava a planilha clínica no disco do servidor.
+                with secure_tempfile(os.path.splitext(validos[0])[1]) as inner_path:
+                    with open(inner_path, "wb") as inner:
+                        inner.write(z.read(validos[0]))
+                    df = (_ler_csv(inner_path) if validos[0].lower().endswith(".csv")
+                          else pd.read_excel(inner_path, engine="openpyxl"))
         elif nome.endswith(".csv"):
             df = _ler_csv(tmp_path)
         else:
@@ -589,6 +661,7 @@ if not dois_relatorios:
             "a amostra. Colunas de analito, data e hora são opcionais."
         )
         st.stop()
+    _checar_upload(arquivo, "planilha única")
     df = carregar_planilha(arquivo.getvalue(), arquivo.name)
     if df is None or df.empty:
         st.error("Não foi possível ler a planilha ou ela está vazia.")
@@ -678,6 +751,8 @@ else:
             "ter mais de um teste."
         )
         st.stop()
+    _checar_upload(arq1, "relatório original")
+    _checar_upload(arq2, "relatório de repetição")
     df1 = carregar_planilha(arq1.getvalue(), arq1.name)
     df2 = carregar_planilha(arq2.getvalue(), arq2.name)
     if df1 is None or df1.empty or df2 is None or df2.empty:
@@ -777,11 +852,12 @@ else:
         with st.expander(f"🔎 Ver {stats['n_so_orig'] + stats['n_so_rep']} amostra(s) não casada(s)"):
             nc = status_merge[status_merge["Status"] != "Par completo"]
             st.dataframe(nc, use_container_width=True, height=240)
-            st.download_button(
+            if _pode_exportar() and st.download_button(
                 "⬇️ Baixar não casadas (CSV)",
                 data=nc.to_csv(index=False, sep=";", decimal=",",
                                encoding="utf-8-sig").encode("utf-8-sig"),
-                file_name="amostras_nao_casadas.csv", mime="text/csv")
+                file_name="amostras_nao_casadas.csv", mime="text/csv"):
+                _registrar_download("amostras_nao_casadas.csv", len(nc))
 
     df = matched
     col_r1, col_r2, col_id, col_analito = "R1", "R2", "Código de barras", "Teste"
@@ -1111,15 +1187,18 @@ export = export.rename(columns={
     "Equip. R2": "Equipamento Repetição",
 })
 
-d1, d2 = st.columns(2)
-with d1:
-    st.download_button("⬇️ Baixar tabela (Excel)", data=to_excel(export, cols_2dec=cols_2dec),
-                       file_name="analise_repeticoes.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-with d2:
-    csv_bytes = export.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("⬇️ Baixar tabela (CSV)", data=csv_bytes,
-                       file_name="analise_repeticoes.csv", mime="text/csv")
+if _pode_exportar():
+    d1, d2 = st.columns(2)
+    with d1:
+        if st.download_button("⬇️ Baixar tabela (Excel)", data=to_excel(export, cols_2dec=cols_2dec),
+                              file_name="analise_repeticoes.xlsx",
+                              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"):
+            _registrar_download("analise_repeticoes.xlsx", len(export))
+    with d2:
+        csv_bytes = export.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig").encode("utf-8-sig")
+        if st.download_button("⬇️ Baixar tabela (CSV)", data=csv_bytes,
+                              file_name="analise_repeticoes.csv", mime="text/csv"):
+            _registrar_download("analise_repeticoes.csv", len(export))
 st.caption("O **.xlsx** sai com colunas centralizadas e largura ajustada (autofit). O "
            "**.csv** é texto puro — não guarda largura/alinhamento (isso é do Excel); "
            "ele leva a mesma ordem, nomes e arredondamento das colunas.")
