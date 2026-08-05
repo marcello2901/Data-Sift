@@ -147,7 +147,18 @@ def _connect_postgres(url: str):
     try:
         import psycopg  # psycopg 3
 
-        return psycopg.connect(dsn)
+        # prepare_threshold=None desliga os prepared statements automáticos.
+        #
+        # O pooler do Supabase na porta 6543 opera em modo transação: o
+        # pgBouncer devolve a conexão de servidor ao pool no fim de cada
+        # transação e a próxima pode cair em outra conexão. Um statement
+        # preparado numa delas não existe na seguinte, e o erro aparece
+        # intermitentemente ("prepared statement ... does not exist"),
+        # normalmente só sob carga — o pior tipo de falha para diagnosticar.
+        #
+        # O custo de desligar é irrelevante aqui: as consultas de identidade
+        # são poucas e curtas, e cada operação já abre a própria conexão.
+        return psycopg.connect(dsn, prepare_threshold=None)
     except ImportError:
         pass
     try:
