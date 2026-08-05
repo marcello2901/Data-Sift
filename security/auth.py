@@ -559,12 +559,40 @@ def bootstrap_if_needed() -> Optional[str]:
     """
     init_db()
 
-    if repository.count_active_superadmins() > 0:
-        return None
-
     cfg = get_config()
     email = safe_email(cfg.bootstrap_admin_email)
     if not email:
+        return None
+
+    # --- Recuperação: senha inicial perdida ---
+    #
+    # A senha gerada aparece uma única vez na tela de login. Se a página for
+    # recarregada antes de alguém copiá-la, ela se perde e não há como entrar —
+    # a conta existe, então o bootstrap normal não age mais.
+    #
+    # A saída é definir DATASIFT_BOOTSTRAP_ADMIN_PASSWORD nos secrets: a senha
+    # é reaplicada aqui. A condição que torna isso seguro é
+    # ``last_login_at IS NULL`` — só vale para uma conta que nunca foi usada.
+    # Sem essa guarda, um segredo esquecido na configuração poderia redefinir a
+    # senha de um administrador em atividade a cada reinício do app.
+    if cfg.bootstrap_admin_password:
+        row = repository.get_auth_row(email)
+        if row is not None and not row.get("last_login_at"):
+            repository.set_password(
+                row["id"],
+                hash_password(cfg.bootstrap_admin_password),
+                must_change=True,
+            )
+            repository.set_user_role(row["id"], ROLE_SUPERADMIN)
+            repository.set_user_status(row["id"], STATUS_ACTIVE)
+            repository.unlock_user(row["id"])
+            audit.record(audit.PASSWORD_RESET, audit.OUTCOME_SUCCESS,
+                         actor_email="bootstrap", org_id=row.get("org_id"),
+                         target=email,
+                         detail={"motivo": "recuperacao_senha_inicial"})
+            return None
+
+    if repository.count_active_superadmins() > 0:
         return None
 
     org = None
