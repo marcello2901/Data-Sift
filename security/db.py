@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -360,3 +361,126 @@ def healthcheck() -> tuple[bool, str]:
         return True, "Postgres" if is_postgres() else f"SQLite ({get_config().db_path})"
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
+
+
+def redact_dsn(url: Optional[str]) -> str:
+    """
+    Descreve a conexão sem revelar a senha.
+
+    Existe porque diagnosticar falha de banco exige ver host, porta e usuário —
+    e é justamente aí que mora a maioria dos erros de configuração. Imprimir a
+    URL inteira resolveria, mas colocaria a senha do Postgres na tela e, pior,
+    no print que a pessoa manda para pedir ajuda.
+    """
+    if not url:
+        return "(não definido)"
+
+    # A redação vem ANTES do parse, por regex, e não depende dele.
+    #
+    # urlparse levanta ValueError ao ler a porta quando a senha contém
+    # colchetes — o caso de quem esqueceu de substituir [YOUR-PASSWORD]. Se a
+    # redação dependesse do parse, a função falharia exatamente na situação
+    # que ela precisa diagnosticar, e ainda arriscaria devolver a URL crua.
+    redacted = re.sub(r"(://[^:/@]+:)[^@]*(@)", r"\1***\2", url)
+
+    tem_senha = bool(re.search(r"://[^:/@]+:[^@]+@", url))
+    marcador = "[YOUR-PASSWORD]" in url or "[SUA-SENHA]" in url
+
+    try:
+        parsed = urlparse(redacted)
+        host = parsed.hostname or "?"
+        try:
+            port = parsed.port or "?"
+        except ValueError:
+            port = "?"
+        user = parsed.username or "?"
+        database = (parsed.path or "/?").lstrip("/") or "?"
+        estado = (
+            "NÃO substituída (ainda é o marcador)" if marcador
+            else ("definida" if tem_senha else "AUSENTE")
+        )
+        return f"{user}@{host}:{port}/{database} (senha: {estado})"
+    except Exception:
+        # Último recurso: devolve a string já redigida, que ainda mostra host
+        # e porta e continua sem expor a senha.
+        return redacted
+
+
+def connection_diagnostics() -> list[tuple[str, str]]:
+    """
+    Checagens que identificam a causa de uma falha de conexão.
+
+    Devolve pares (verificação, resultado) prontos para exibição. Cada item
+    corresponde a um erro real e distinto — driver ausente, porta errada,
+    marcador de senha não substituído — porque "não foi possível conectar"
+    sozinho não diz em qual deles você caiu.
+    """
+    cfg = get_config()
+    checks: list[tuple[str, str]] = []
+
+    if not cfg.database_url:
+        checks.append(("Modo", "SQLite local — DATASIFT_DATABASE_URL não foi lido"))
+        return checks
+
+    checks.append(("Modo", "Postgres"))
+    checks.append(("Destino", redact_dsn(cfg.database_url)))
+
+    # find_spec em vez de import: aqui só interessa saber se o driver existe.
+    # Importar de verdade traria o módulo inteiro para dentro de uma função de
+    # diagnóstico que pode rodar com o banco fora do ar.
+    from importlib.util import find_spec
+
+    if find_spec("psycopg") is not None:
+        checks.append(("Driver", "psycopg 3 instalado"))
+    elif find_spec("psycopg2") is not None:
+        checks.append(("Driver", "psycopg2 (alternativo) instalado"))
+    else:
+        checks.append((
+            "Driver",
+            "AUSENTE — nenhum driver Postgres instalado. Confirme que o "
+            "requirements.txt do repositório contém 'psycopg[binary]' e "
+            "reinicie o app (Manage app → Reboot).",
+        ))
+
+    url = cfg.database_url
+    if "[YOUR-PASSWORD]" in url or "[SUA-SENHA]" in url:
+        checks.append((
+            "Senha",
+            "O marcador [YOUR-PASSWORD] continua na string — substitua pela "
+            "senha real, sem os colchetes.",
+        ))
+
+    # Um segundo "@" depois do esquema significa que a senha contém um "@"
+    # literal. O parser corta a URL no ÚLTIMO "@", então parte da senha vira
+    # nome de host e a conexão falha com um erro que não menciona a senha.
+    depois_do_esquema = url.split("://", 1)[-1]
+    if depois_do_esquema.count("@") > 1:
+        checks.append((
+            "Senha",
+            "A senha parece conter um '@' literal, que precisa ser escrito "
+            "como %40 dentro da URL. Outros caracteres que exigem o mesmo: "
+            "'#' vira %23, '/' vira %2F, ':' vira %3A, '%' vira %25. "
+            "Alternativa mais simples: gere uma senha nova pelo Supabase "
+            "(Database → Reset database password), que não usa esses símbolos.",
+        ))
+
+    try:
+        # Mesma redação usada acima: sem ela, urlparse levanta ValueError ao ler
+        # a porta quando a senha traz colchetes.
+        parsed = urlparse(re.sub(r"(://[^:/@]+:)[^@]*(@)", r"\1***\2", url))
+        if parsed.port == 5432 and "pooler" not in (parsed.hostname or ""):
+            checks.append((
+                "Porta",
+                "5432 com host direto. No Streamlit Cloud isso costuma falhar: "
+                "a conexão direta do Supabase só responde em IPv6. Use a string "
+                "do Transaction pooler, na porta 6543.",
+            ))
+        elif parsed.port != 6543:
+            checks.append((
+                "Porta",
+                f"{parsed.port} — o esperado para o pooler do Supabase é 6543.",
+            ))
+    except Exception:
+        pass
+
+    return checks

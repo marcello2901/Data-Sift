@@ -60,11 +60,27 @@ def _boot() -> None:
             "Não foi possível conectar ao banco de segurança. O acesso está "
             "bloqueado até que a conexão seja restabelecida."
         )
-        with st.expander("Detalhes técnicos para o administrador"):
+
+        # O diagnóstico fica aberto por padrão. Uma falha de banco no boot só
+        # acontece durante a configuração inicial, e nesse momento esconder a
+        # causa atrás de um clique não protege ninguém — só atrasa quem está
+        # tentando resolver. A senha nunca aparece: ver db.redact_dsn.
+        from .db import connection_diagnostics
+
+        with st.expander("Diagnóstico", expanded=True):
+            for label, result in connection_diagnostics():
+                st.markdown(f"- **{label}:** {result}")
+
+            st.markdown("**Erro retornado pelo banco:**")
             st.code(f"{type(exc).__name__}: {exc}")
+
             st.caption(
-                "Verifique DATASIFT_DATABASE_URL em Settings → Secrets. "
-                "Com Supabase, use a string do pooler (porta 6543)."
+                "Causas mais comuns, em ordem: driver ausente (falta reiniciar "
+                "o app após atualizar o requirements.txt); marcador "
+                "[YOUR-PASSWORD] não substituído; porta 5432 em vez de 6543; "
+                "senha com caractere especial que precisa de codificação URL "
+                "(@ vira %40, # vira %23); projeto Supabase pausado por "
+                "inatividade."
             )
         st.stop()
 
