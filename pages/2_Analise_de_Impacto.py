@@ -421,18 +421,20 @@ def _juntar_pdfs(partes) -> bytes:
     return saida.getvalue()
 
 
-def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_problema: str,
-              anexos=None) -> bytes:
+def gerar_pdf(grupos, operador: str, data_problema: str) -> bytes:
     """
-    Gera um PDF (A4 paisagem) com o 'Detalhe por amostra', pronto para assinatura/
-    auditoria: **texto completo** na coluna Impacto, **quebra automática de linha**
-    e **autofit** de linhas e colunas. A coluna Impacto sai colorida (verde/vermelho,
-    como no app). Cabeçalho com equipamento, operador e data/hora. Usa reportlab.
+    Gera um PDF (A4 paisagem) pronto para assinatura/auditoria, com **texto completo**
+    na coluna Impacto, **quebra automática de linha** e **autofit** de linhas e colunas.
+    A coluna Impacto sai colorida (verde/vermelho, como no app). Usa reportlab.
 
-    ``anexos`` é uma lista de ``(nome_do_arquivo, bytes)`` com os dados brutos
-    (jpg/png/pdf). Cada anexo entra **sempre em página nova**, depois da tabela e
-    **na ordem em que foi enviado**: imagens ganham uma página cada; PDFs entram
-    com todas as suas páginas.
+    ``grupos`` é uma lista de ``(equipamento, tabela_detalhe, anexos)``, um item por
+    equipamento analisado. ``anexos`` é uma lista de ``(nome_do_arquivo, bytes)``
+    com os dados brutos (jpg/png/pdf).
+
+    A ordem do documento é: **uma tabela “Detalhe por amostra” para cada equipamento,
+    em sequência**, e só depois os **dados brutos de cada equipamento** — cada anexo
+    sempre em página nova (imagens ganham uma página cada; PDFs entram com todas as
+    suas páginas).
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -443,17 +445,9 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_probl
     from reportlab.lib.enums import TA_CENTER, TA_LEFT
     from reportlab.lib.utils import ImageReader
     from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle, Paragraph,
-                                    PageBreak, Image as RLImage, Spacer)
+                                    PageBreak, Image as RLImage)
 
-    df = detalhe.copy()
-    if "Erro total %" in df.columns:
-        df["Erro total %"] = pd.to_numeric(df["Erro total %"], errors="coerce").map(
-            lambda v: "" if pd.isna(v) else f"{v:.2f}")
-    for c in ("Excede ETM", "Mudou interpretação"):
-        if c in df.columns:
-            df[c] = df[c].map(lambda v: "Sim" if bool(v) else "Não")
-    df = df.astype(str)
-    colunas = list(df.columns)
+    grupos = [g for g in (grupos or []) if g is not None]
 
     ss = getSampleStyleSheet()
     st_titulo = ParagraphStyle("titulo", parent=ss["Title"], fontSize=15, alignment=TA_LEFT,
@@ -466,45 +460,62 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_probl
     st_verde = ParagraphStyle("verde", parent=st_cel, textColor=colors.HexColor("#0F5132"))
     st_vermelho = ParagraphStyle("vermelho", parent=st_cel, fontName="Helvetica-Bold",
                                  textColor=colors.HexColor("#9B1C1C"))
+    st_eq = ParagraphStyle("eq", parent=ss["Normal"], fontName="Helvetica-Bold", fontSize=11,
+                           textColor=colors.HexColor("#073B4C"), spaceBefore=2, spaceAfter=5)
 
-    # Células como Paragraph -> quebra automática de linha; Impacto colorido pelo valor.
-    linhas = [[Paragraph(str(c), st_head) for c in colunas]]
-    for _, row in df.iterrows():
-        cel = []
-        for c in colunas:
-            v = str(row[c])
-            if c == "Impacto":
-                cel.append(Paragraph(v, st_verde if v == "Sem impacto" else st_vermelho))
-            else:
-                cel.append(Paragraph(v, st_cel))
-        linhas.append(cel)
-
-    # Autofit das colunas: largura proporcional ao maior conteúdo, com teto (força a quebra).
     pagina = landscape(A4)
     util = pagina[0] - 20 * mm
-    natural = {c: max([len(str(c))] + [len(str(v)) for v in df[c].values]) for c in colunas}
     TETO = 26
-    peso = [min(natural[c], TETO) for c in colunas]
-    larguras = [util * p / sum(peso) for p in peso]
 
-    tab = Table(linhas, colWidths=larguras, repeatRows=1)   # repete o cabeçalho a cada página
-    estilo = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#073B4C")),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F7FA")]),
-    ]
-    if "Impacto" in colunas:
-        ci = colunas.index("Impacto")
-        for i, v in enumerate(df["Impacto"].tolist(), start=1):
-            cor = colors.HexColor("#E7F6EC") if v == "Sem impacto" else colors.HexColor("#FFE3E3")
-            estilo.append(("BACKGROUND", (ci, i), (ci, i), cor))
-    tab.setStyle(TableStyle(estilo))
+    def _tabela(detalhe: pd.DataFrame):
+        """Monta a Table (flowable) do 'Detalhe por amostra' de um equipamento."""
+        df = detalhe.copy()
+        if "Erro total %" in df.columns:
+            df["Erro total %"] = pd.to_numeric(df["Erro total %"], errors="coerce").map(
+                lambda v: "" if pd.isna(v) else f"{v:.2f}")
+        for c in ("Excede ETM", "Mudou interpretação"):
+            if c in df.columns:
+                df[c] = df[c].map(lambda v: "Sim" if bool(v) else "Não")
+        df = df.astype(str)
+        colunas = list(df.columns)
 
-    cab = (f"Equipamento: {equipamento} &nbsp;&nbsp;|&nbsp;&nbsp; Operador: {operador or '—'} "
-           f"&nbsp;&nbsp;|&nbsp;&nbsp; Data do problema: {data_problema or '—'}"
+        # Células como Paragraph -> quebra automática; Impacto colorido pelo valor.
+        linhas = [[Paragraph(str(c), st_head) for c in colunas]]
+        for _, row in df.iterrows():
+            cel = []
+            for c in colunas:
+                v = str(row[c])
+                if c == "Impacto":
+                    cel.append(Paragraph(v, st_verde if v == "Sem impacto" else st_vermelho))
+                else:
+                    cel.append(Paragraph(v, st_cel))
+            linhas.append(cel)
+
+        # Autofit: largura proporcional ao maior conteúdo, com teto (força a quebra).
+        natural = {c: max([len(str(c))] + [len(str(v)) for v in df[c].values]) for c in colunas}
+        peso = [min(natural[c], TETO) for c in colunas]
+        larguras = [util * p / sum(peso) for p in peso]
+
+        tab = Table(linhas, colWidths=larguras, repeatRows=1)   # repete o cabeçalho
+        estilo = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#073B4C")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F7FA")]),
+        ]
+        if "Impacto" in colunas:
+            ci = colunas.index("Impacto")
+            for i, v in enumerate(df["Impacto"].tolist(), start=1):
+                cor = (colors.HexColor("#E7F6EC") if v == "Sem impacto"
+                       else colors.HexColor("#FFE3E3"))
+                estilo.append(("BACKGROUND", (ci, i), (ci, i), cor))
+        tab.setStyle(TableStyle(estilo))
+        return tab
+
+    cab = (f"Operador: {operador or '—'} &nbsp;&nbsp;|&nbsp;&nbsp; "
+           f"Data do problema: {data_problema or '—'}"
            f"&nbsp;&nbsp;|&nbsp;&nbsp; Relatório gerado em "
            f"{datetime.now(ZoneInfo('America/Sao_Paulo')):%d/%m/%Y %H:%M} ")
     buf = io.BytesIO()
@@ -512,17 +523,26 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_probl
     m_topo, m_base = 12 * mm, 10 * mm
     doc = SimpleDocTemplate(buf, pagesize=pagina, leftMargin=m_esq, rightMargin=m_dir,
                             topMargin=m_topo, bottomMargin=m_base, title="Análise de Impacto")
-    story = [Paragraph("Análise de Impacto — Detalhe por amostra", st_titulo),
-             Paragraph(cab, st_sub), tab]
 
-    # ---- Dados brutos: cada anexo em PÁGINA NOVA ---------------------------- #
-    anexos = [a for a in (anexos or []) if a and a[1]]
+    # 1ª parte: uma tabela de detalhe por amostra para CADA equipamento, em páginas
+    # sequenciais — cada equipamento começa em uma página nova, um após o outro.
+    story = [Paragraph("Análise de Impacto — Detalhe por amostra", st_titulo),
+             Paragraph(cab, st_sub)]
+    for i_eq, (equipamento, detalhe, _) in enumerate(grupos):
+        if i_eq:
+            story.append(PageBreak())
+        story.append(Paragraph(f"Equipamento: {equipamento}", st_eq))
+        story.append(_tabela(detalhe))
+
+    # 2ª parte: dados brutos de cada equipamento, cada anexo em PÁGINA NOVA.
     larg_util = pagina[0] - m_esq - m_dir
     alt_util = pagina[1] - m_topo - m_base
 
-    def _bloco_imagem(nome, dados, n=None, total=None):
+    def _bloco_imagem(nome, dados, equipamento=None, n=None, total=None):
         """Título + imagem escalada para caber na página, mantendo a proporção."""
         rotulo = "Dados brutos dos resultados"
+        if equipamento:
+            rotulo += f" — {equipamento}"
         if total and total > 1:
             rotulo += f" ({n} de {total})"
         blocos = [Paragraph(rotulo, st_titulo), Paragraph(f"Arquivo: {nome}", st_sub)]
@@ -540,24 +560,30 @@ def gerar_pdf(detalhe: pd.DataFrame, equipamento: str, operador: str, data_probl
                                  rightMargin=m_dir, topMargin=m_topo,
                                  bottomMargin=m_base, title="Análise de Impacto")
 
-    total = len(anexos)
-    if not any(_anexo_eh_pdf(n) for n, _ in anexos):
-        # Só imagens (ou nenhum anexo): tudo em um documento só, sem precisar de pypdf.
-        for i, (nome, dados) in enumerate(anexos, start=1):
+    # Anexos na ordem: todos os do 1º equipamento, depois os do 2º, e assim por diante.
+    pendentes = []          # (equipamento, nome, dados, n, total_do_equipamento)
+    for equipamento, _, anexos in grupos:
+        limpos = [a for a in (anexos or []) if a and a[1]]
+        for i, (nome, dados) in enumerate(limpos, start=1):
+            pendentes.append((equipamento, nome, dados, i, len(limpos)))
+
+    if not any(_anexo_eh_pdf(nome) for _, nome, _, _, _ in pendentes):
+        # Só imagens (ou nenhum anexo): documento único, sem precisar de pypdf.
+        for equipamento, nome, dados, i, total in pendentes:
             story.append(PageBreak())
-            story += _bloco_imagem(nome, dados, i, total)
+            story += _bloco_imagem(nome, dados, equipamento, i, total)
         doc.build(story)
         return buf.getvalue()
 
-    # Há anexo em PDF: cada peça vira um PDF e todas são unidas na ORDEM enviada.
+    # Há anexo em PDF: cada peça vira um PDF e todas são unidas na ORDEM acima.
     doc.build(story)
     partes = [buf.getvalue()]
-    for i, (nome, dados) in enumerate(anexos, start=1):
+    for equipamento, nome, dados, i, total in pendentes:
         if _anexo_eh_pdf(nome):
             partes.append(dados)
         else:
             buf_img = io.BytesIO()
-            _novo_doc(buf_img).build(_bloco_imagem(nome, dados, i, total))
+            _novo_doc(buf_img).build(_bloco_imagem(nome, dados, equipamento, i, total))
             partes.append(buf_img.getvalue())
     return _juntar_pdfs(partes)
 
@@ -651,31 +677,265 @@ def _cod_vazio(v) -> bool:
 
 
 # Estado dos blocos de teste (um id por bloco)
-if "imp_blocos" not in st.session_state:
-    st.session_state.imp_blocos = [1]
+# Estado: um "grupo" por equipamento, cada um com a sua própria lista de blocos
+# de teste. Os ids de bloco continuam únicos no app inteiro (imp_next), então as
+# chaves teste_<bid>/am_<bid> nunca colidem entre equipamentos.
+if "imp_equipos" not in st.session_state:
+    st.session_state.imp_equipos = [1]
+    st.session_state.imp_eq_next = 2
+    st.session_state.imp_blocos_eq = {1: [1]}
     st.session_state.imp_next = 2
 
 # ---- 3 · Equipamento, dados brutos e testes -------------------------------- #
-with st.container(border=True):
-    st.markdown("### 3 · Equipamento, dados brutos e testes")
-    equip_sel = st.selectbox("Equipamento (vale para todos os testes abaixo)",
-                             equipamentos, index=0 if equipamentos else None)
+st.markdown("### 3 · Equipamento, dados brutos e testes")
+st.caption("Cada bloco abaixo é um **equipamento**, com os seus próprios dados brutos e "
+           "testes. Use **Adicionar equipamento** para analisar mais de um equipamento "
+           "no mesmo relatório.")
 
-    # Comprovante dos resultados digitados nas tabelas. Obrigatório: o PDF final é
-    # assinado e auditado, e sai com este arquivo em página própria.
-    arqs_brutos = st.file_uploader(
-        "Dados brutos dos resultados (obrigatório) — JPG, PNG ou PDF",
-        type=list(EXT_ANEXO), accept_multiple_files=True, key="imp_dados_brutos",
-        help="Prints ou relatórios do equipamento/sistema com os resultados que você "
-             "vai digitar nas tabelas abaixo. Pode enviar **vários arquivos**: cada um "
-             "entra em página nova no PDF baixado, na ordem em que aparecem aqui.")
-    arqs_brutos = _checar_anexos(arqs_brutos)
-    if arqs_brutos:
-        _total_kb = sum(len(a.getvalue()) for a in arqs_brutos) / 1024
-        st.caption(f"📎 **{len(arqs_brutos)} arquivo(s)** ({_total_kb:,.0f} KB no total) — "
-                   "cada um entra em página própria no PDF final, nesta ordem.")
-        with st.expander(f"👁️ Conferir os {len(arqs_brutos)} arquivo(s) enviado(s)"):
-            for _i, _a in enumerate(arqs_brutos, start=1):
+grupos_ui = []      # um item por equipamento: nome, anexos e blocos de teste
+for pos_eq, eq in enumerate(list(st.session_state.imp_equipos)):
+    eh_primeiro = (pos_eq == 0)
+    blocos_ids = list(st.session_state.imp_blocos_eq.get(eq, [])) or [eq * 1000 + 1]
+    st.session_state.imp_blocos_eq.setdefault(eq, blocos_ids)
+
+    with st.container(border=True):
+        cab_eq = st.columns([5, 1])
+        with cab_eq[0]:
+            st.markdown(f"**Equipamento {pos_eq + 1}**")
+        with cab_eq[1]:
+            if len(st.session_state.imp_equipos) > 1 and st.button(
+                    "🗑️ Remover equipamento", key=f"del_eq_{eq}"):
+                for _b in st.session_state.imp_blocos_eq.pop(eq, []):
+                    st.session_state.pop(f"teste_{_b}", None)
+                    for _k in [k for k in list(st.session_state.keys())
+                               if k == f"am_{_b}" or k.startswith(f"am_{_b}__")]:
+                        st.session_state.pop(_k, None)
+                st.session_state.imp_equipos.remove(eq)
+                st.rerun()
+
+        equip_sel_eq = st.selectbox("Equipamento (vale para todos os testes deste bloco)",
+                                    equipamentos, index=0 if equipamentos else None,
+                                    key=f"equip_{eq}")
+
+        # Comprovante dos resultados digitados nas tabelas. Obrigatório no 1º
+        # equipamento (o PDF é assinado e auditado); opcional nos demais.
+        _rot = ("Dados brutos dos resultados (obrigatório) — JPG, PNG ou PDF" if eh_primeiro
+                else "Dados brutos deste equipamento (opcional) — JPG, PNG ou PDF")
+        arqs_eq = st.file_uploader(
+            _rot, type=list(EXT_ANEXO), accept_multiple_files=True,
+            key=f"imp_dados_brutos_{eq}",
+            help="Prints ou relatórios do equipamento/sistema com os resultados que você "
+                 "vai digitar nas tabelas abaixo. Pode enviar **vários arquivos**: cada um "
+                 "entra em página nova no PDF, depois das tabelas de todos os equipamentos.")
+        arqs_eq = list(arqs_eq or [])
+        prev_eq = st.container()   # a pré-visualização é escrita aqui, após a validação
+
+        perfil_sel = st.selectbox(
+            "Perfil (opcional) — ao escolher, já carrega todos os testes do perfil",
+            ["(nenhum)"] + list(PERFIS.keys()), key=f"perfil_{eq}")
+        _k_aplicado = f"_perfil_aplicado_{eq}"
+        _k_backup = f"_perfil_backup_{eq}"
+        _k_faltantes = f"_perfil_faltantes_{eq}"
+        if perfil_sel == "(nenhum)":
+            if st.session_state.get(_k_aplicado):
+                # Voltou para "(nenhum)": desfaz o perfil e restaura os testes que
+                # existiam antes de aplicá-lo (limpando os blocos criados pelo perfil).
+                for bid in list(st.session_state.imp_blocos_eq.get(eq, [])):
+                    st.session_state.pop(f"teste_{bid}", None)
+                    for k in [k for k in list(st.session_state.keys())
+                              if k == f"am_{bid}" or k.startswith(f"am_{bid}__")]:
+                        st.session_state.pop(k, None)
+                bkp = (st.session_state.get(_k_backup)
+                       or {"blocos": blocos_ids, "imp_next": st.session_state.imp_next,
+                           "estados": {}})
+                st.session_state.imp_blocos_eq[eq] = list(bkp["blocos"])
+                # Restaura os testes escolhidos nos blocos que existiam antes do perfil
+                # (o Streamlit descarta o estado de widgets que deixam de ser renderizados).
+                for k, v in bkp.get("estados", {}).items():
+                    st.session_state[k] = v
+                st.session_state["_perfil_res"] = {}
+                st.session_state[_k_aplicado] = None
+                st.session_state[_k_faltantes] = []
+                st.rerun()
+            st.session_state[_k_aplicado] = None
+            st.session_state[_k_faltantes] = []
+        elif st.session_state.get(_k_aplicado) != perfil_sel:
+            if not st.session_state.get(_k_aplicado):
+                # Guarda o estado atual (antes do perfil) para restaurar ao voltar a
+                # "(nenhum)": ids dos blocos e o teste escolhido em cada um. (O conteúdo
+                # das tabelas de amostras não pode ser reatribuído via session_state —
+                # regra do Streamlit para o data_editor.)
+                estados = {f"teste_{bid}": st.session_state[f"teste_{bid}"]
+                           for bid in st.session_state.imp_blocos_eq.get(eq, [])
+                           if f"teste_{bid}" in st.session_state}
+                st.session_state[_k_backup] = {
+                    "blocos": list(st.session_state.imp_blocos_eq.get(eq, [])),
+                    "imp_next": st.session_state.imp_next,
+                    "estados": estados,
+                }
+            achados, faltantes = [], []
+            for nome in PERFIS[perfil_sel]:
+                m = _match_teste(nome, testes)
+                (achados if m else faltantes).append(m or nome)
+            if achados:
+                ids = list(range(st.session_state.imp_next,
+                                 st.session_state.imp_next + len(achados)))
+                for bid, t in zip(ids, achados):
+                    st.session_state[f"teste_{bid}"] = t
+                st.session_state.imp_blocos_eq[eq] = ids
+                st.session_state.imp_next += len(achados)
+            st.session_state[_k_aplicado] = perfil_sel
+            st.session_state[_k_faltantes] = faltantes
+            st.rerun()
+        if st.session_state.get(_k_faltantes):
+            st.warning("Testes do perfil não encontrados na base (confira os nomes): "
+                       + ", ".join(st.session_state[_k_faltantes]))
+
+        st.caption("Cada bloco abaixo é um **teste**, com o seu ETM e IR puxados da base e "
+                   "a sua própria tabela de amostras (mínimo 3). Use o ➕ da tabela para "
+                   "mais linhas e **Adicionar teste** para mais testes.")
+
+        # Com um perfil ativo, o 1º bloco é o "dono" dos códigos de barras: o que for
+        # digitado nele é replicado (só leitura) para os demais testes do perfil. Assim
+        # o usuário digita os códigos uma vez e só preenche os resultados dos outros.
+        perfil_ativo = bool(st.session_state.get(_k_aplicado))
+        blocos_ids = list(st.session_state.imp_blocos_eq.get(eq, []))
+        codigos_master = None     # códigos do 1º bloco, preenchidos ao renderá-lo
+        nome_master = "1º teste"  # nome do 1º teste (dono dos códigos), para as legendas
+
+        blocos_dados = []   # (teste, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada_df)
+        for pos, bid in enumerate(blocos_ids):
+            eh_master = (pos == 0)
+            replicar = perfil_ativo and not eh_master
+            with st.container(border=True):
+                top = st.columns([5, 1])
+                with top[0]:
+                    _tkey = f"teste_{bid}"
+                    if _tkey in st.session_state:
+                        teste_sel = st.selectbox("Nome do teste", testes, key=_tkey)
+                    else:
+                        teste_sel = st.selectbox("Nome do teste", testes,
+                                                 index=0 if testes else None, key=_tkey)
+                with top[1]:
+                    st.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+                    if len(blocos_ids) > 1 and st.button("🗑️ Remover", key=f"del_{bid}"):
+                        st.session_state.imp_blocos_eq[eq].remove(bid)
+                        st.rerun()
+
+                etm, ir_txt, lo, hi, zc_txt, zc_lo, zc_hi = lookup_teste(teste_sel)
+                if zc_txt:
+                    cE = st.columns(3)
+                    cE[2].metric("Zona cinza (indeterminado)", zc_txt)
+                else:
+                    cE = st.columns(2)
+                cE[0].metric("Erro Total Máximo (ETM)", f"{etm:.2f} %" if etm is not None else "—")
+                cE[1].metric("Intervalo de Referência (IR)", ir_txt if ir_txt else "—")
+
+                if replicar:
+                    # Códigos vêm do 1º bloco (só leitura); resultados guardados por código.
+                    cods = ["" if _cod_vazio(c) else str(c).strip()
+                            for c in (codigos_master if codigos_master is not None else ["", "", ""])]
+                    modelo = st.session_state.setdefault("_perfil_res", {}).setdefault(bid, {})
+            
+                    # A chave do editor muda quando o conjunto de códigos muda
+                    ed_key = f"am_{bid}__{len(cods)}|" + "|".join(cods)
+            
+                    # Chave para guardar o dataframe estático na sessão
+                    df_state_key = f"_base_df_{bid}"
+
+                    # SÓ recriamos o dataframe base se a lista de códigos de barras (RBC) 
+                    # tiver mudado ou se for a primeira vez renderizando. 
+                    # Isso evita a sobreposição de dados que apaga a digitação rápida.
+                    if st.session_state.get(f"_prev_key_{bid}") != ed_key or df_state_key not in st.session_state:
+                        chaves, r1s, r2s = [], [], []
+                        for i, c in enumerate(cods):
+                            chave = c if c else f"__pos_{i}"
+                            chaves.append(chave)
+                            r1, r2 = modelo.get(chave, ("", ""))
+                            r1s.append(r1)
+                            r2s.append(r2)
+                
+                        dados = pd.DataFrame({"Código de barras": cods,
+                                              "Resultado 1": r1s, "Resultado 2": r2s})
+                
+                        st.session_state[df_state_key] = dados
+                        st.session_state[f"_prev_key_{bid}"] = ed_key
+                    else:
+                        # Se não houve mudança nos códigos, usamos o dataframe já instanciado
+                        dados = st.session_state[df_state_key]
+
+                    entrada = st.data_editor(
+                        dados, num_rows="fixed", use_container_width=True, key=ed_key,
+                        disabled=["Código de barras"],
+                        column_config={
+                            "Código de barras": st.column_config.TextColumn("Código de barras"),
+                            "Resultado 1": st.column_config.TextColumn("Resultado 1"),
+                            "Resultado 2": st.column_config.TextColumn("Resultado 2"),
+                        },
+                    )
+            
+                    # Continua salvando no 'modelo' em background para não perder 
+                    # os resultados caso você adicione um novo código de barras lá no topo.
+                    for i in range(len(entrada)):
+                        chave = cods[i] if cods[i] else f"__pos_{i}"
+                        modelo[chave] = (entrada.iloc[i]["Resultado 1"],
+                                         entrada.iloc[i]["Resultado 2"])
+                
+                    st.caption(f"🔗 Códigos de barras replicados do teste **{nome_master}** — "
+                               f"edite-os no bloco do **{nome_master}** para atualizar todos "
+                               "ao mesmo tempo.")
+                else:
+                    seed = pd.DataFrame({"Código de barras": ["", "", ""],
+                                         "Resultado 1": ["", "", ""],
+                                         "Resultado 2": ["", "", ""]})
+                    entrada = st.data_editor(
+                        seed, num_rows="dynamic", use_container_width=True, key=f"am_{bid}",
+                        column_config={
+                            "Código de barras": st.column_config.TextColumn("Código de barras"),
+                            "Resultado 1": st.column_config.TextColumn("Resultado 1"),
+                            "Resultado 2": st.column_config.TextColumn("Resultado 2"),
+                        },
+                    )
+                    if eh_master and perfil_ativo:
+                        codigos_master = entrada["Código de barras"].tolist()
+                        nome_master = teste_sel
+                        st.caption(f"🔗 Perfil ativo: os códigos de barras deste teste "
+                                   f"(**{nome_master}**) são replicados automaticamente para os "
+                                   "demais testes do perfil.")
+
+                blocos_dados.append((teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada))
+
+        if st.button("➕ Adicionar teste", key=f"add_teste_{eq}"):
+            st.session_state.imp_blocos_eq[eq].append(st.session_state.imp_next)
+            st.session_state.imp_next += 1
+            st.rerun()
+
+    grupos_ui.append({"eq": eq, "equipamento": equip_sel_eq, "arqs": arqs_eq,
+                      "prev": prev_eq, "blocos": blocos_dados})
+
+if st.button("🏭 Adicionar equipamento"):
+    _novo = st.session_state.imp_eq_next
+    st.session_state.imp_equipos.append(_novo)
+    st.session_state.imp_blocos_eq[_novo] = [st.session_state.imp_next]
+    st.session_state.imp_next += 1
+    st.session_state.imp_eq_next += 1
+    st.rerun()
+
+# Os anexos de TODOS os equipamentos são validados de uma vez só: o controle de
+# taxa do _checar_anexos consome uma cota por chamada, então validar por grupo
+# gastaria a cota do usuário mais rápido quanto mais equipamentos ele analisasse.
+_todos_anexos = [a for g in grupos_ui for a in g["arqs"]]
+_checar_anexos(_todos_anexos)
+
+for _g in grupos_ui:
+    if not _g["arqs"]:
+        continue
+    with _g["prev"]:
+        _total_kb = sum(len(a.getvalue()) for a in _g["arqs"]) / 1024
+        st.caption(f"📎 **{len(_g['arqs'])} arquivo(s)** ({_total_kb:,.0f} KB) — cada um "
+                   "entra em página própria no PDF final, nesta ordem.")
+        with st.expander(f"👁️ Conferir os {len(_g['arqs'])} arquivo(s) enviado(s)"):
+            for _i, _a in enumerate(_g["arqs"], start=1):
                 _kb = len(_a.getvalue()) / 1024
                 st.markdown(f"**{_i}. {_a.name}** — {_kb:,.0f} KB")
                 if _anexo_eh_pdf(_a.name):
@@ -685,194 +945,18 @@ with st.container(border=True):
                     # o segundo em versões novas, e o requirements fixa streamlit 1.32.2.
                     st.image(_a.getvalue(), use_column_width=True)
 
-    perfil_sel = st.selectbox(
-        "Perfil (opcional) — ao escolher, já carrega todos os testes do perfil",
-        ["(nenhum)"] + list(PERFIS.keys()), key="perfil_sel")
-    if perfil_sel == "(nenhum)":
-        if st.session_state.get("_perfil_aplicado"):
-            # Voltou para "(nenhum)": desfaz o perfil e restaura os testes que
-            # existiam antes de aplicá-lo (limpando os blocos criados pelo perfil).
-            for bid in list(st.session_state.imp_blocos):
-                st.session_state.pop(f"teste_{bid}", None)
-                for k in [k for k in list(st.session_state.keys())
-                          if k == f"am_{bid}" or k.startswith(f"am_{bid}__")]:
-                    st.session_state.pop(k, None)
-            bkp = (st.session_state.get("_perfil_backup")
-                   or {"imp_blocos": [1], "imp_next": 2, "estados": {}})
-            st.session_state.imp_blocos = list(bkp["imp_blocos"])
-            st.session_state.imp_next = bkp["imp_next"]
-            # Restaura os testes escolhidos nos blocos que existiam antes do perfil
-            # (o Streamlit descarta o estado de widgets que deixam de ser renderizados).
-            for k, v in bkp.get("estados", {}).items():
-                st.session_state[k] = v
-            st.session_state["_perfil_res"] = {}
-            st.session_state["_perfil_aplicado"] = None
-            st.session_state["_perfil_faltantes"] = []
-            st.rerun()
-        st.session_state["_perfil_aplicado"] = None
-        st.session_state["_perfil_faltantes"] = []
-    elif st.session_state.get("_perfil_aplicado") != perfil_sel:
-        if not st.session_state.get("_perfil_aplicado"):
-            # Guarda o estado atual (antes do perfil) para restaurar ao voltar a "(nenhum)":
-            # ids dos blocos, próximo id e o teste escolhido em cada bloco. (O conteúdo
-            # das tabelas de amostras não pode ser reatribuído via session_state — regra
-            # do Streamlit para o data_editor — então restauramos a estrutura e os testes.)
-            estados = {f"teste_{bid}": st.session_state[f"teste_{bid}"]
-                       for bid in st.session_state.imp_blocos
-                       if f"teste_{bid}" in st.session_state}
-            st.session_state["_perfil_backup"] = {
-                "imp_blocos": list(st.session_state.imp_blocos),
-                "imp_next": st.session_state.imp_next,
-                "estados": estados,
-            }
-        achados, faltantes = [], []
-        for nome in PERFIS[perfil_sel]:
-            m = _match_teste(nome, testes)
-            (achados if m else faltantes).append(m or nome)
-        if achados:
-            ids = list(range(st.session_state.imp_next,
-                             st.session_state.imp_next + len(achados)))
-            for bid, t in zip(ids, achados):
-                st.session_state[f"teste_{bid}"] = t
-            st.session_state.imp_blocos = ids
-            st.session_state.imp_next += len(achados)
-        st.session_state["_perfil_aplicado"] = perfil_sel
-        st.session_state["_perfil_faltantes"] = faltantes
-        st.rerun()
-    if st.session_state.get("_perfil_faltantes"):
-        st.warning("Testes do perfil não encontrados na base (confira os nomes): "
-                   + ", ".join(st.session_state["_perfil_faltantes"]))
-
-    st.caption("Cada bloco abaixo é um **teste**, com o seu ETM e IR puxados da base e a sua "
-               "própria tabela de amostras (mínimo 3). Use o ➕ da tabela para mais linhas e o "
-               "botão **Adicionar teste** para mais testes.")
-
-# Com um perfil ativo, o 1º bloco (RBC) é o "dono" dos códigos de barras: o que for
-# digitado nele é replicado (só leitura) para os demais testes do perfil. Assim o
-# usuário digita os códigos uma única vez e só preenche os resultados dos outros testes.
-perfil_ativo = bool(st.session_state.get("_perfil_aplicado"))
-blocos_ids = list(st.session_state.imp_blocos)
-codigos_master = None   # códigos do 1º bloco, preenchidos ao renderá-lo
-nome_master = "1º teste"  # nome do 1º teste (dono dos códigos), para as legendas
-
-blocos_dados = []   # (teste, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada_df)
-for pos, bid in enumerate(blocos_ids):
-    eh_master = (pos == 0)
-    replicar = perfil_ativo and not eh_master
-    with st.container(border=True):
-        top = st.columns([5, 1])
-        with top[0]:
-            _tkey = f"teste_{bid}"
-            if _tkey in st.session_state:
-                teste_sel = st.selectbox("Nome do teste", testes, key=_tkey)
-            else:
-                teste_sel = st.selectbox("Nome do teste", testes,
-                                         index=0 if testes else None, key=_tkey)
-        with top[1]:
-            st.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
-            if len(blocos_ids) > 1 and st.button("🗑️ Remover", key=f"del_{bid}"):
-                st.session_state.imp_blocos.remove(bid)
-                st.rerun()
-
-        etm, ir_txt, lo, hi, zc_txt, zc_lo, zc_hi = lookup_teste(teste_sel)
-        if zc_txt:
-            cE = st.columns(3)
-            cE[2].metric("Zona cinza (indeterminado)", zc_txt)
-        else:
-            cE = st.columns(2)
-        cE[0].metric("Erro Total Máximo (ETM)", f"{etm:.2f} %" if etm is not None else "—")
-        cE[1].metric("Intervalo de Referência (IR)", ir_txt if ir_txt else "—")
-
-        if replicar:
-            # Códigos vêm do 1º bloco (só leitura); resultados guardados por código.
-            cods = ["" if _cod_vazio(c) else str(c).strip()
-                    for c in (codigos_master if codigos_master is not None else ["", "", ""])]
-            modelo = st.session_state.setdefault("_perfil_res", {}).setdefault(bid, {})
-            
-            # A chave do editor muda quando o conjunto de códigos muda
-            ed_key = f"am_{bid}__{len(cods)}|" + "|".join(cods)
-            
-            # Chave para guardar o dataframe estático na sessão
-            df_state_key = f"_base_df_{bid}"
-
-            # SÓ recriamos o dataframe base se a lista de códigos de barras (RBC) 
-            # tiver mudado ou se for a primeira vez renderizando. 
-            # Isso evita a sobreposição de dados que apaga a digitação rápida.
-            if st.session_state.get(f"_prev_key_{bid}") != ed_key or df_state_key not in st.session_state:
-                chaves, r1s, r2s = [], [], []
-                for i, c in enumerate(cods):
-                    chave = c if c else f"__pos_{i}"
-                    chaves.append(chave)
-                    r1, r2 = modelo.get(chave, ("", ""))
-                    r1s.append(r1)
-                    r2s.append(r2)
-                
-                dados = pd.DataFrame({"Código de barras": cods,
-                                      "Resultado 1": r1s, "Resultado 2": r2s})
-                
-                st.session_state[df_state_key] = dados
-                st.session_state[f"_prev_key_{bid}"] = ed_key
-            else:
-                # Se não houve mudança nos códigos, usamos o dataframe já instanciado
-                dados = st.session_state[df_state_key]
-
-            entrada = st.data_editor(
-                dados, num_rows="fixed", use_container_width=True, key=ed_key,
-                disabled=["Código de barras"],
-                column_config={
-                    "Código de barras": st.column_config.TextColumn("Código de barras"),
-                    "Resultado 1": st.column_config.TextColumn("Resultado 1"),
-                    "Resultado 2": st.column_config.TextColumn("Resultado 2"),
-                },
-            )
-            
-            # Continua salvando no 'modelo' em background para não perder 
-            # os resultados caso você adicione um novo código de barras lá no topo.
-            for i in range(len(entrada)):
-                chave = cods[i] if cods[i] else f"__pos_{i}"
-                modelo[chave] = (entrada.iloc[i]["Resultado 1"],
-                                 entrada.iloc[i]["Resultado 2"])
-                
-            st.caption(f"🔗 Códigos de barras replicados do teste **{nome_master}** — "
-                       f"edite-os no bloco do **{nome_master}** para atualizar todos "
-                       "ao mesmo tempo.")
-        else:
-            seed = pd.DataFrame({"Código de barras": ["", "", ""],
-                                 "Resultado 1": ["", "", ""],
-                                 "Resultado 2": ["", "", ""]})
-            entrada = st.data_editor(
-                seed, num_rows="dynamic", use_container_width=True, key=f"am_{bid}",
-                column_config={
-                    "Código de barras": st.column_config.TextColumn("Código de barras"),
-                    "Resultado 1": st.column_config.TextColumn("Resultado 1"),
-                    "Resultado 2": st.column_config.TextColumn("Resultado 2"),
-                },
-            )
-            if eh_master and perfil_ativo:
-                codigos_master = entrada["Código de barras"].tolist()
-                nome_master = teste_sel
-                st.caption(f"🔗 Perfil ativo: os códigos de barras deste teste "
-                           f"(**{nome_master}**) são replicados automaticamente para os "
-                           "demais testes do perfil.")
-
-        blocos_dados.append((teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada))
-
-if st.button("➕ Adicionar teste"):
-    st.session_state.imp_blocos.append(st.session_state.imp_next)
-    st.session_state.imp_next += 1
-    st.rerun()
-
 # ---- Processar análise ---------------------------------------------------- #
 # A análise (seções 4 e 5) só roda depois de clicar em "Processar análise".
 # Uma assinatura leve das entradas indica se o que está na tela ainda corresponde
 # ao que foi processado; enquanto o usuário digita, a assinatura muda e nada é
 # recalculado (evita travamentos ao preencher vários testes).
-_anexo_id = ("|".join(f"{a.name}:{len(a.getvalue())}" for a in arqs_brutos)
-             or "sem-anexo")
-_assinatura = "\n".join(
-    [str(equip_sel), str(operador), str(data_problema), _anexo_id]
-    + [f"{t[0]}::{t[7].to_csv(index=False)}" for t in blocos_dados]
-)
+_partes_sig = [str(operador), str(data_problema)]
+for _g in grupos_ui:
+    _partes_sig.append(f"EQ::{_g['equipamento']}")
+    _partes_sig.append("|".join(f"{a.name}:{len(a.getvalue())}" for a in _g["arqs"])
+                       or "sem-anexo")
+    _partes_sig += [f"{t[0]}::{t[7].to_csv(index=False)}" for t in _g["blocos"]]
+_assinatura = "\n".join(_partes_sig)
 
 st.markdown("")
 if st.button("🔎 Processar análise", type="primary"):
@@ -884,72 +968,44 @@ if st.session_state.get("imp_proc_sig") != _assinatura:
             "processado — clique novamente sempre que alterar algum dado.")
     st.stop()
 
-# ---- Cálculo e validações obrigatórias (todos os blocos) ------------------ #
-resultados = []   # (teste_sel, res_ou_None, n_validas)
-for teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada in blocos_dados:
-    res, q = analisar_bloco(entrada, teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi)
-    resultados.append((teste_sel, res, q))
-
-# Obrigatoriedades antes de gerar a análise: operador, data do problema e
-# no mínimo 3 amostras válidas em CADA teste adicionado (no perfil ou fora dele).
-incompletos = [(t, q) for (t, res, q) in resultados if res is None]
-
+# ---- Cálculo e validações obrigatórias (todos os equipamentos) ------------- #
 erros = []
 if not operador.strip():
     erros.append("Preencha o **Nome do operador responsável** (seção 1).")
 if data_problema is None:
     erros.append("Preencha a **Data do problema** (seção 2).")
-if not arqs_brutos:
+# Os dados brutos são obrigatórios no 1º equipamento; nos demais são opcionais.
+if grupos_ui and not grupos_ui[0]["arqs"]:
     erros.append("Envie ao menos um arquivo com os **dados brutos dos resultados** "
-                 "(JPG, PNG ou PDF) na seção 3.")
-if incompletos:
-    _lst = ", ".join(f"**{t}** ({q}/3)" for t, q in incompletos)
-    erros.append("Cada teste precisa de **no mínimo 3 amostras válidas** (código de barras + "
-                 f"Resultado 1 e 2 numéricos, R1 ≠ 0). Faltam amostras em: {_lst}.")
+                 "(JPG, PNG ou PDF) no **primeiro equipamento** da seção 3.")
+
+grupos = []   # (equipamento, todos_do_equipamento, anexos)
+for _pos, _g in enumerate(grupos_ui, start=1):
+    _res = []
+    for teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada in _g["blocos"]:
+        r, q = analisar_bloco(entrada, teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi)
+        _res.append((teste_sel, r, q))
+    _incompletos = [(t, q) for (t, r, q) in _res if r is None]
+    if _incompletos:
+        _lst = ", ".join(f"**{t}** ({q}/3)" for t, q in _incompletos)
+        erros.append(f"**{_g['equipamento']}** (equipamento {_pos}): cada teste precisa de "
+                     "**no mínimo 3 amostras válidas** (código de barras + Resultado 1 e 2 "
+                     f"numéricos, R1 ≠ 0). Faltam amostras em: {_lst}.")
+        continue
+    grupos.append((_g["equipamento"],
+                   pd.concat([r for (_, r, _) in _res], ignore_index=True),
+                   [(a.name, a.getvalue()) for a in _g["arqs"]]))
 
 if erros:
     for _e in erros:
         st.warning("⚠️ " + _e)
     st.stop()
 
-todos = pd.concat([res for (_, res, _) in resultados], ignore_index=True)
+# Visão consolidada (usada nas métricas gerais e na exportação .xlsx/.csv)
+todos = pd.concat([t.assign(Equipamento=nome) for nome, t, _ in grupos], ignore_index=True)
 
 # ---- 4 · Resultado da análise --------------------------------------------- #
 st.markdown("### 4 · Resultado da análise de impacto")
-st.caption(f"Equipamento avaliado: **{equip_sel}** · {todos['Teste'].nunique()} teste(s).")
-
-n = len(todos)
-n_etm = int(todos["Excede ETM"].sum())
-n_interp = int(todos["Mudou interpretação"].sum())
-n_impacto = int((todos["Impacto"] != "Sem impacto").sum())
-
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Amostras analisadas", f"{n}")
-m2.metric("Excedem o ETM", f"{n_etm}")
-m3.metric("Mudam de interpretação", f"{n_interp}")
-m4.metric("Com impacto (combinado)", f"{n_impacto}")
-
-if n_impacto:
-    st.error(f"⚠️ {n_impacto} de {n} amostra(s) **com impacto** no equipamento **{equip_sel}** "
-             "(excedem o ETM e/ou mudam de interpretação). Avalie antes de liberar.")
-else:
-    st.success(f"✅ Nenhuma das {n} amostras apresentou impacto em **{equip_sel}**.")
-
-# Resumo por teste
-resumo = (todos.assign(_imp=(todos["Impacto"] != "Sem impacto").astype(int),
-                       _etm=todos["Excede ETM"].astype(int),
-                       _int=todos["Mudou interpretação"].astype(int))
-          .groupby("Teste")
-          .agg(Amostras=("Impacto", "size"), Excedem_ETM=("_etm", "sum"),
-               Mudam_interp=("_int", "sum"), Com_impacto=("_imp", "sum"))
-          .reset_index())
-st.markdown("**Resumo por teste**")
-st.dataframe(resumo, use_container_width=True)
-
-# Detalhe por amostra
-tab = todos[["Teste", "Código de barras", "R1", "R2", "Erro total %", "Excede ETM",
-             "Interpretação R1", "Interpretação R2", "Mudou interpretação", "Impacto"]].rename(
-    columns={"R1": "Resultado 1", "R2": "Resultado 2"})
 
 
 def _hl(v):
@@ -958,27 +1014,75 @@ def _hl(v):
             else "background-color:#FFE3E3; color:#9B1C1C; font-weight:700")
 
 
-st.markdown("**Detalhe por amostra**")
-st.dataframe(tab.style.format({"Erro total %": "{:.2f}", "Resultado 1": "{:.3f}",
-                               "Resultado 2": "{:.3f}"}).map(_hl, subset=["Impacto"]),
-             use_container_width=True)
+COLS_DETALHE = ["Teste", "Código de barras", "R1", "R2", "Erro total %", "Excede ETM",
+                "Interpretação R1", "Interpretação R2", "Mudou interpretação", "Impacto"]
+
+if len(grupos) > 1:
+    _tot = len(todos)
+    _tot_imp = int((todos["Impacto"] != "Sem impacto").sum())
+    st.caption(f"**{len(grupos)} equipamentos** · {_tot} amostra(s) no total · "
+               f"{_tot_imp} com impacto.")
+
+# Uma tabela de "Detalhe por amostra" para CADA equipamento, na mesma ordem do PDF.
+tabelas_pdf = []
+for _pos, (_equip, _todos_eq, _anexos_eq) in enumerate(grupos, start=1):
+    with st.container(border=True):
+        st.markdown(f"#### Equipamento {_pos}: {_equip}")
+        st.caption(f"{_todos_eq['Teste'].nunique()} teste(s) avaliado(s).")
+
+        n = len(_todos_eq)
+        n_etm = int(_todos_eq["Excede ETM"].sum())
+        n_interp = int(_todos_eq["Mudou interpretação"].sum())
+        n_impacto = int((_todos_eq["Impacto"] != "Sem impacto").sum())
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Amostras analisadas", f"{n}")
+        m2.metric("Excedem o ETM", f"{n_etm}")
+        m3.metric("Mudam de interpretação", f"{n_interp}")
+        m4.metric("Com impacto (combinado)", f"{n_impacto}")
+
+        if n_impacto:
+            st.error(f"⚠️ {n_impacto} de {n} amostra(s) **com impacto** em **{_equip}** "
+                     "(excedem o ETM e/ou mudam de interpretação). Avalie antes de liberar.")
+        else:
+            st.success(f"✅ Nenhuma das {n} amostras apresentou impacto em **{_equip}**.")
+
+        # Resumo por teste
+        resumo = (_todos_eq.assign(_imp=(_todos_eq["Impacto"] != "Sem impacto").astype(int),
+                                   _etm=_todos_eq["Excede ETM"].astype(int),
+                                   _int=_todos_eq["Mudou interpretação"].astype(int))
+                  .groupby("Teste")
+                  .agg(Amostras=("Impacto", "size"), Excedem_ETM=("_etm", "sum"),
+                       Mudam_interp=("_int", "sum"), Com_impacto=("_imp", "sum"))
+                  .reset_index())
+        st.markdown("**Resumo por teste**")
+        st.dataframe(resumo, use_container_width=True)
+
+        tab_eq = _todos_eq[COLS_DETALHE].rename(
+            columns={"R1": "Resultado 1", "R2": "Resultado 2"})
+        st.markdown("**Detalhe por amostra**")
+        st.dataframe(tab_eq.style.format({"Erro total %": "{:.2f}", "Resultado 1": "{:.3f}",
+                                          "Resultado 2": "{:.3f}"}).map(_hl, subset=["Impacto"]),
+                     use_container_width=True)
+        tabelas_pdf.append((_equip, tab_eq, _anexos_eq))
 
 # ---- 5 · Exportar --------------------------------------------------------- #
 st.markdown("### 5 · Exportar")
-export = todos[["Teste", "ETM (%)", "IR", "Código de barras", "R1", "R2", "Erro total %",
-                "Excede ETM", "Interpretação R1", "Interpretação R2",
+# O .xlsx/.csv trazem todos os equipamentos na mesma tabela, com a coluna Equipamento.
+export = todos[["Equipamento", "Teste", "ETM (%)", "IR", "Código de barras", "R1", "R2",
+                "Erro total %", "Excede ETM", "Interpretação R1", "Interpretação R2",
                 "Mudou interpretação", "Impacto"]].rename(
     columns={"R1": "Resultado 1", "R2": "Resultado 2"}).copy()
-export.insert(0, "Equipamento", equip_sel)
 export.insert(0, "Operador", operador)
 export["Erro total %"] = export["Erro total %"].round(2)
 
 # Nome padrão dos arquivos: "Análise de Impacto [equipamento] - [data DD-MM-AAAA]".
-# A data é a do problema (seção 2); se vazia, usa a data de geração (hoje, Brasília).
+# Com mais de um equipamento, entra a quantidade no lugar do nome (evita nome enorme).
 _data_arq = (data_problema.strftime("%d-%m-%Y") if data_problema
              else datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d-%m-%Y"))
+_quem = (grupos[0][0] if len(grupos) == 1 else f"{len(grupos)} equipamentos")
 _nome_arq = re.sub(r'[\\/:*?"<>|]+', "-",
-                   f"Análise de Impacto {equip_sel} - {_data_arq}").strip()
+                   f"Análise de Impacto {_quem} - {_data_arq}").strip()
 
 if not _pode_exportar():
     st.stop()
@@ -997,19 +1101,23 @@ with d2:
         _registrar_download(f"{_nome_arq}.csv", len(export))
 with d3:
     data_prob_txt = data_problema.strftime("%d/%m/%Y") if data_problema else ""
-    _anexos = [(a.name, a.getvalue()) for a in arqs_brutos]
     try:
-        _pdf_bytes = gerar_pdf(tab, equip_sel, operador, data_prob_txt, anexos=_anexos)
+        _pdf_bytes = gerar_pdf(tabelas_pdf, operador, data_prob_txt)
     except ModuleNotFoundError:
         # Anexo em PDF precisa do pypdf; sem ele, mantém só as imagens.
         st.warning("Para anexar **dados brutos em PDF** é preciso a biblioteca `pypdf` "
                    "(adicione `pypdf` ao requirements.txt). O relatório saiu apenas com "
                    "os anexos em imagem.")
-        _pdf_bytes = gerar_pdf(tab, equip_sel, operador, data_prob_txt,
-                               anexos=[a for a in _anexos if not _anexo_eh_pdf(a[0])])
+        _pdf_bytes = gerar_pdf(
+            [(e, t, [a for a in anx if not _anexo_eh_pdf(a[0])]) for e, t, anx in tabelas_pdf],
+            operador, data_prob_txt)
     if st.download_button("⬇️ Baixar (PDF)", data=_pdf_bytes,
                           file_name=f"{_nome_arq}.pdf", mime="application/pdf"):
         _registrar_download(f"{_nome_arq}.pdf", len(export))
-st.caption(f"O **PDF** leva os **{len(arqs_brutos)} arquivo(s)** de dados brutos da seção 3, "
-           "cada um em **página própria**, na ordem enviada. O .xlsx e o .csv contêm "
-           "apenas a tabela.")
+
+_n_anexos = sum(len(anx) for _, _, anx in tabelas_pdf)
+st.caption(f"O **PDF** traz uma tabela *Detalhe por amostra* para cada um dos "
+           f"**{len(grupos)} equipamento(s)**, em sequência, e depois os "
+           f"**{_n_anexos} arquivo(s)** de dados brutos — cada um em **página própria**, "
+           "agrupados por equipamento. O .xlsx e o .csv trazem todos os equipamentos "
+           "na mesma tabela, com a coluna *Equipamento*.")
