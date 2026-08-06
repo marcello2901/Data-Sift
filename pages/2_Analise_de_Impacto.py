@@ -18,6 +18,7 @@ Página do app DataSift (pasta ``pages/``). Também roda de forma independente c
 ``streamlit run pages/2_Analise_de_Impacto.py``.
 """
 
+import hashlib
 import io
 import os
 import re
@@ -71,6 +72,32 @@ _ASSINATURAS_ANEXO = {
 }
 
 
+_ANEXOS_OK_KEY = "_anexos_validados"
+
+
+def _impressao_anexos(arquivos) -> str:
+    """
+    Identifica o conjunto de anexos enviado, para saber se ele mudou.
+
+    Usa o ``file_id`` que o Streamlit atribui a cada upload: ele é estável
+    entre reruns e **muda a cada novo envio**, mesmo que o arquivo tenha o
+    mesmo nome e o mesmo tamanho do anterior — exatamente o caso que uma
+    comparação por nome deixaria passar sem revalidar. Sem ``file_id``
+    (versões antigas), cai para nome + tamanho + hash do início do arquivo,
+    que é onde fica a assinatura verificada mais abaixo.
+    """
+    partes = []
+    for anexo in arquivos:
+        fid = getattr(anexo, "file_id", None)
+        if fid:
+            partes.append(str(fid))
+        else:
+            dados = anexo.getvalue()
+            partes.append(f"{anexo.name}:{len(dados)}:"
+                          f"{hashlib.sha256(dados[:4096]).hexdigest()}")
+    return hashlib.sha256("|".join(partes).encode("utf-8")).hexdigest()
+
+
 def _checar_anexos(arquivos) -> list:
     """
     Valida os anexos: quantidade, tamanho e assinatura real do arquivo.
@@ -78,10 +105,21 @@ def _checar_anexos(arquivos) -> list:
     A checagem de assinatura importa porque estes bytes são embutidos no PDF
     final: um arquivo que se diz PNG mas é outra coisa vira conteúdo arbitrário
     dentro de um documento que o laboratório trata como comprovante assinado.
+
+    A validação roda uma vez por conjunto de anexos, não a cada rerun. O
+    Streamlit reexecuta a página a cada tecla digitada nas tabelas de amostras,
+    e antes disso cada uma dessas reexecuções gastava duas idas ao banco (cota
+    de envio + auditoria) revalidando exatamente os mesmos arquivos. Além da
+    lentidão, isso consumia a cota de uploads do usuário enquanto ele apenas
+    digitava, e enchia a auditoria de registros repetidos do mesmo envio.
     """
     arquivos = list(arquivos or [])
     if not arquivos:
         return []
+
+    impressao = _impressao_anexos(arquivos)
+    if st.session_state.get(_ANEXOS_OK_KEY) == impressao:
+        return arquivos     # mesmo conjunto já aprovado nesta sessão
 
     if not _user.has_permission(PERM_DATA_UPLOAD):
         st.error("Seu perfil é somente leitura e não permite enviar arquivos.")
@@ -125,6 +163,7 @@ def _checar_anexos(arquivos) -> list:
     audit.record(audit.DATA_UPLOADED, audit.OUTCOME_SUCCESS, actor_id=_user.id,
                  actor_email=_user.email, org_id=_user.org_id, target="anexos",
                  detail={"quantidade": len(arquivos), "total_kb": total // 1024})
+    st.session_state[_ANEXOS_OK_KEY] = impressao
     return arquivos
 
 

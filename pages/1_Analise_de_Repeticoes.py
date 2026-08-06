@@ -26,6 +26,7 @@ Este arquivo é uma PÁGINA do app DataSift (pasta ``pages/``), mas também roda
 de forma independente com ``streamlit run pages/1_Analise_de_Repeticoes.py``.
 """
 
+import hashlib
 import io
 import os
 import re
@@ -69,6 +70,23 @@ hide_admin_nav(_user)
 security_ui.render_account_sidebar(_user)
 
 
+_UPLOADS_OK_KEY = "_uploads_validados"
+
+
+def _impressao_upload(arquivo) -> str:
+    """
+    Identifica o arquivo enviado, para saber se ele mudou entre reruns.
+
+    Usa o ``file_id`` do Streamlit: estável entre reruns e diferente a cada
+    novo envio, mesmo com nome e tamanho iguais aos do arquivo anterior.
+    """
+    fid = getattr(arquivo, "file_id", None)
+    if fid:
+        return str(fid)
+    dados = arquivo.getvalue()
+    return f"{arquivo.name}:{len(dados)}:{hashlib.sha256(dados[:4096]).hexdigest()}"
+
+
 def _checar_upload(arquivo, rotulo: str = "planilha"):
     """
     Permissão → limite de taxa → validação do arquivo. Interrompe se reprovar.
@@ -76,9 +94,19 @@ def _checar_upload(arquivo, rotulo: str = "planilha"):
     A validação (assinatura do arquivo, tamanho, bomba de descompressão) roda
     antes de ``carregar_planilha``, que é a etapa cara e a que efetivamente
     abre o conteúdo.
+
+    Cada arquivo é conferido uma vez por envio, e não a cada rerun. O Streamlit
+    reexecuta a página inteira a cada interação, e antes disso toda tecla
+    digitada refazia a varredura de bomba de descompressão e gastava duas idas
+    ao banco (cota de envio + auditoria) para reconferir a mesma planilha.
     """
     if arquivo is None:
         return None
+
+    _impressao = _impressao_upload(arquivo)
+    _vistos = st.session_state.setdefault(_UPLOADS_OK_KEY, set())
+    if _impressao in _vistos:
+        return arquivo      # mesmo arquivo já aprovado nesta sessão
 
     if not _user.has_permission(PERM_DATA_UPLOAD):
         st.error("Seu perfil é somente leitura e não permite enviar arquivos.")
@@ -103,6 +131,7 @@ def _checar_upload(arquivo, rotulo: str = "planilha"):
                  actor_email=_user.email, org_id=_user.org_id,
                  target=_check.safe_name,
                  detail={"contexto": rotulo, "tamanho_kb": _check.size_bytes // 1024})
+    _vistos.add(_impressao)
     return arquivo
 
 
