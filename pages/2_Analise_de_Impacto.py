@@ -405,6 +405,19 @@ def _anexo_eh_pdf(nome: str) -> bool:
     return str(nome).lower().endswith(".pdf")
 
 
+def _lista_equipamentos(nomes) -> str:
+    """
+    Junta os equipamentos para o nome do arquivo: ``A``, ``A e B``, ``A, B e C``
+    (vírgula entre todos e “e” antes do último).
+    """
+    nomes = [str(n).strip() for n in (nomes or []) if str(n).strip()]
+    if not nomes:
+        return ""
+    if len(nomes) == 1:
+        return nomes[0]
+    return ", ".join(nomes[:-1]) + " e " + nomes[-1]
+
+
 def _juntar_pdfs(partes) -> bytes:
     """
     Junta vários PDFs (bytes) em um só, na ordem recebida — cada página de cada
@@ -421,20 +434,21 @@ def _juntar_pdfs(partes) -> bytes:
     return saida.getvalue()
 
 
-def gerar_pdf(grupos, operador: str, data_problema: str) -> bytes:
+def gerar_pdf(grupos, operador: str, data_problema: str, anexos=None) -> bytes:
     """
     Gera um PDF (A4 paisagem) pronto para assinatura/auditoria, com **texto completo**
     na coluna Impacto, **quebra automática de linha** e **autofit** de linhas e colunas.
     A coluna Impacto sai colorida (verde/vermelho, como no app). Usa reportlab.
 
-    ``grupos`` é uma lista de ``(equipamento, tabela_detalhe, anexos)``, um item por
-    equipamento analisado. ``anexos`` é uma lista de ``(nome_do_arquivo, bytes)``
-    com os dados brutos (jpg/png/pdf).
+    ``grupos`` é uma lista de ``(equipamento, tabela_detalhe)``, um item por equipamento
+    analisado. ``anexos`` é a lista de ``(nome_do_arquivo, bytes)`` com os dados brutos
+    (jpg/png/pdf) de **todos** os resultados — eles valem para a análise inteira, não
+    para um equipamento específico.
 
-    A ordem do documento é: **uma tabela “Detalhe por amostra” para cada equipamento,
-    em sequência**, e só depois os **dados brutos de cada equipamento** — cada anexo
-    sempre em página nova (imagens ganham uma página cada; PDFs entram com todas as
-    suas páginas).
+    A ordem do documento é: **uma tabela “Detalhe por amostra” por equipamento, cada
+    uma em página própria e em sequência**, e só depois os **dados brutos** — cada
+    anexo sempre em página nova (imagens ganham uma página cada; PDFs entram com
+    todas as suas páginas).
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -528,7 +542,7 @@ def gerar_pdf(grupos, operador: str, data_problema: str) -> bytes:
     # sequenciais — cada equipamento começa em uma página nova, um após o outro.
     story = [Paragraph("Análise de Impacto — Detalhe por amostra", st_titulo),
              Paragraph(cab, st_sub)]
-    for i_eq, (equipamento, detalhe, _) in enumerate(grupos):
+    for i_eq, (equipamento, detalhe) in enumerate(grupos):
         if i_eq:
             story.append(PageBreak())
         story.append(Paragraph(f"Equipamento: {equipamento}", st_eq))
@@ -538,11 +552,9 @@ def gerar_pdf(grupos, operador: str, data_problema: str) -> bytes:
     larg_util = pagina[0] - m_esq - m_dir
     alt_util = pagina[1] - m_topo - m_base
 
-    def _bloco_imagem(nome, dados, equipamento=None, n=None, total=None):
+    def _bloco_imagem(nome, dados, n=None, total=None):
         """Título + imagem escalada para caber na página, mantendo a proporção."""
         rotulo = "Dados brutos dos resultados"
-        if equipamento:
-            rotulo += f" — {equipamento}"
         if total and total > 1:
             rotulo += f" ({n} de {total})"
         blocos = [Paragraph(rotulo, st_titulo), Paragraph(f"Arquivo: {nome}", st_sub)]
@@ -560,30 +572,27 @@ def gerar_pdf(grupos, operador: str, data_problema: str) -> bytes:
                                  rightMargin=m_dir, topMargin=m_topo,
                                  bottomMargin=m_base, title="Análise de Impacto")
 
-    # Anexos na ordem: todos os do 1º equipamento, depois os do 2º, e assim por diante.
-    pendentes = []          # (equipamento, nome, dados, n, total_do_equipamento)
-    for equipamento, _, anexos in grupos:
-        limpos = [a for a in (anexos or []) if a and a[1]]
-        for i, (nome, dados) in enumerate(limpos, start=1):
-            pendentes.append((equipamento, nome, dados, i, len(limpos)))
+    # Dados brutos de todos os resultados, na ordem em que foram enviados.
+    pendentes = [a for a in (anexos or []) if a and a[1]]
+    total = len(pendentes)
 
-    if not any(_anexo_eh_pdf(nome) for _, nome, _, _, _ in pendentes):
+    if not any(_anexo_eh_pdf(nome) for nome, _ in pendentes):
         # Só imagens (ou nenhum anexo): documento único, sem precisar de pypdf.
-        for equipamento, nome, dados, i, total in pendentes:
+        for i, (nome, dados) in enumerate(pendentes, start=1):
             story.append(PageBreak())
-            story += _bloco_imagem(nome, dados, equipamento, i, total)
+            story += _bloco_imagem(nome, dados, i, total)
         doc.build(story)
         return buf.getvalue()
 
     # Há anexo em PDF: cada peça vira um PDF e todas são unidas na ORDEM acima.
     doc.build(story)
     partes = [buf.getvalue()]
-    for equipamento, nome, dados, i, total in pendentes:
+    for i, (nome, dados) in enumerate(pendentes, start=1):
         if _anexo_eh_pdf(nome):
             partes.append(dados)
         else:
             buf_img = io.BytesIO()
-            _novo_doc(buf_img).build(_bloco_imagem(nome, dados, equipamento, i, total))
+            _novo_doc(buf_img).build(_bloco_imagem(nome, dados, i, total))
             partes.append(buf_img.getvalue())
     return _juntar_pdfs(partes)
 
@@ -717,18 +726,20 @@ for pos_eq, eq in enumerate(list(st.session_state.imp_equipos)):
                                     equipamentos, index=0 if equipamentos else None,
                                     key=f"equip_{eq}")
 
-        # Comprovante dos resultados digitados nas tabelas. Obrigatório no 1º
-        # equipamento (o PDF é assinado e auditado); opcional nos demais.
-        _rot = ("Dados brutos dos resultados (obrigatório) — JPG, PNG ou PDF" if eh_primeiro
-                else "Dados brutos deste equipamento (opcional) — JPG, PNG ou PDF")
-        arqs_eq = st.file_uploader(
-            _rot, type=list(EXT_ANEXO), accept_multiple_files=True,
-            key=f"imp_dados_brutos_{eq}",
-            help="Prints ou relatórios do equipamento/sistema com os resultados que você "
-                 "vai digitar nas tabelas abaixo. Pode enviar **vários arquivos**: cada um "
-                 "entra em página nova no PDF, depois das tabelas de todos os equipamentos.")
-        arqs_eq = list(arqs_eq or [])
-        prev_eq = st.container()   # a pré-visualização é escrita aqui, após a validação
+        # Comprovante dos resultados digitados nas tabelas. Fica só no 1º bloco: os
+        # dados brutos valem para a análise inteira, não para um equipamento.
+        arqs_eq, prev_eq = [], None
+        if eh_primeiro:
+            arqs_eq = st.file_uploader(
+                "Dados brutos de TODOS os resultados (obrigatório) — JPG, PNG ou PDF",
+                type=list(EXT_ANEXO), accept_multiple_files=True,
+                key=f"imp_dados_brutos_{eq}",
+                help="Prints ou relatórios do equipamento/sistema com os resultados que "
+                     "você vai digitar nas tabelas — de **todos os equipamentos** desta "
+                     "análise. Pode enviar vários arquivos: cada um entra em página nova "
+                     "no PDF, depois das tabelas.")
+            arqs_eq = list(arqs_eq or [])
+            prev_eq = st.container()   # pré-visualização escrita aqui, após a validação
 
         perfil_sel = st.selectbox(
             "Perfil (opcional) — ao escolher, já carrega todos os testes do perfil",
@@ -928,7 +939,7 @@ _todos_anexos = [a for g in grupos_ui for a in g["arqs"]]
 _checar_anexos(_todos_anexos)
 
 for _g in grupos_ui:
-    if not _g["arqs"]:
+    if not _g["arqs"] or _g["prev"] is None:
         continue
     with _g["prev"]:
         _total_kb = sum(len(a.getvalue()) for a in _g["arqs"]) / 1024
@@ -974,12 +985,13 @@ if not operador.strip():
     erros.append("Preencha o **Nome do operador responsável** (seção 1).")
 if data_problema is None:
     erros.append("Preencha a **Data do problema** (seção 2).")
-# Os dados brutos são obrigatórios no 1º equipamento; nos demais são opcionais.
-if grupos_ui and not grupos_ui[0]["arqs"]:
-    erros.append("Envie ao menos um arquivo com os **dados brutos dos resultados** "
-                 "(JPG, PNG ou PDF) no **primeiro equipamento** da seção 3.")
+# Os dados brutos cobrem TODOS os equipamentos e ficam no 1º bloco da seção 3.
+anexos_analise = [(a.name, a.getvalue()) for a in (grupos_ui[0]["arqs"] if grupos_ui else [])]
+if not anexos_analise:
+    erros.append("Envie ao menos um arquivo com os **dados brutos de TODOS os "
+                 "resultados** (JPG, PNG ou PDF) na seção 3.")
 
-grupos = []   # (equipamento, todos_do_equipamento, anexos)
+grupos = []   # (equipamento, todos_do_equipamento)
 for _pos, _g in enumerate(grupos_ui, start=1):
     _res = []
     for teste_sel, etm, ir_txt, lo, hi, zc_lo, zc_hi, entrada in _g["blocos"]:
@@ -993,8 +1005,7 @@ for _pos, _g in enumerate(grupos_ui, start=1):
                      f"numéricos, R1 ≠ 0). Faltam amostras em: {_lst}.")
         continue
     grupos.append((_g["equipamento"],
-                   pd.concat([r for (_, r, _) in _res], ignore_index=True),
-                   [(a.name, a.getvalue()) for a in _g["arqs"]]))
+                   pd.concat([r for (_, r, _) in _res], ignore_index=True)))
 
 if erros:
     for _e in erros:
@@ -1002,7 +1013,7 @@ if erros:
     st.stop()
 
 # Visão consolidada (usada nas métricas gerais e na exportação .xlsx/.csv)
-todos = pd.concat([t.assign(Equipamento=nome) for nome, t, _ in grupos], ignore_index=True)
+todos = pd.concat([t.assign(Equipamento=nome) for nome, t in grupos], ignore_index=True)
 
 # ---- 4 · Resultado da análise --------------------------------------------- #
 st.markdown("### 4 · Resultado da análise de impacto")
@@ -1025,7 +1036,7 @@ if len(grupos) > 1:
 
 # Uma tabela de "Detalhe por amostra" para CADA equipamento, na mesma ordem do PDF.
 tabelas_pdf = []
-for _pos, (_equip, _todos_eq, _anexos_eq) in enumerate(grupos, start=1):
+for _pos, (_equip, _todos_eq) in enumerate(grupos, start=1):
     with st.container(border=True):
         st.markdown(f"#### Equipamento {_pos}: {_equip}")
         st.caption(f"{_todos_eq['Teste'].nunique()} teste(s) avaliado(s).")
@@ -1064,7 +1075,7 @@ for _pos, (_equip, _todos_eq, _anexos_eq) in enumerate(grupos, start=1):
         st.dataframe(tab_eq.style.format({"Erro total %": "{:.2f}", "Resultado 1": "{:.3f}",
                                           "Resultado 2": "{:.3f}"}).map(_hl, subset=["Impacto"]),
                      use_container_width=True)
-        tabelas_pdf.append((_equip, tab_eq, _anexos_eq))
+        tabelas_pdf.append((_equip, tab_eq))
 
 # ---- 5 · Exportar --------------------------------------------------------- #
 st.markdown("### 5 · Exportar")
@@ -1076,11 +1087,12 @@ export = todos[["Equipamento", "Teste", "ETM (%)", "IR", "Código de barras", "R
 export.insert(0, "Operador", operador)
 export["Erro total %"] = export["Erro total %"].round(2)
 
-# Nome padrão dos arquivos: "Análise de Impacto [equipamento] - [data DD-MM-AAAA]".
-# Com mais de um equipamento, entra a quantidade no lugar do nome (evita nome enorme).
+# Nome padrão dos arquivos: "Análise de Impacto [equipamentos] - [data DD-MM-AAAA]".
+# Vários equipamentos são listados por vírgula, com "e" antes do último:
+# "A e B" (dois) ou "A, B e C" (três ou mais).
 _data_arq = (data_problema.strftime("%d-%m-%Y") if data_problema
              else datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d-%m-%Y"))
-_quem = (grupos[0][0] if len(grupos) == 1 else f"{len(grupos)} equipamentos")
+_quem = _lista_equipamentos([nome for nome, _ in grupos])
 _nome_arq = re.sub(r'[\\/:*?"<>|]+', "-",
                    f"Análise de Impacto {_quem} - {_data_arq}").strip()
 
@@ -1102,22 +1114,21 @@ with d2:
 with d3:
     data_prob_txt = data_problema.strftime("%d/%m/%Y") if data_problema else ""
     try:
-        _pdf_bytes = gerar_pdf(tabelas_pdf, operador, data_prob_txt)
+        _pdf_bytes = gerar_pdf(tabelas_pdf, operador, data_prob_txt, anexos=anexos_analise)
     except ModuleNotFoundError:
         # Anexo em PDF precisa do pypdf; sem ele, mantém só as imagens.
         st.warning("Para anexar **dados brutos em PDF** é preciso a biblioteca `pypdf` "
                    "(adicione `pypdf` ao requirements.txt). O relatório saiu apenas com "
                    "os anexos em imagem.")
         _pdf_bytes = gerar_pdf(
-            [(e, t, [a for a in anx if not _anexo_eh_pdf(a[0])]) for e, t, anx in tabelas_pdf],
-            operador, data_prob_txt)
+            tabelas_pdf, operador, data_prob_txt,
+            anexos=[a for a in anexos_analise if not _anexo_eh_pdf(a[0])])
     if st.download_button("⬇️ Baixar (PDF)", data=_pdf_bytes,
                           file_name=f"{_nome_arq}.pdf", mime="application/pdf"):
         _registrar_download(f"{_nome_arq}.pdf", len(export))
 
-_n_anexos = sum(len(anx) for _, _, anx in tabelas_pdf)
 st.caption(f"O **PDF** traz uma tabela *Detalhe por amostra* para cada um dos "
-           f"**{len(grupos)} equipamento(s)**, em sequência, e depois os "
-           f"**{_n_anexos} arquivo(s)** de dados brutos — cada um em **página própria**, "
-           "agrupados por equipamento. O .xlsx e o .csv trazem todos os equipamentos "
-           "na mesma tabela, com a coluna *Equipamento*.")
+           f"**{len(grupos)} equipamento(s)**, cada uma em página própria e em sequência, "
+           f"e depois os **{len(anexos_analise)} arquivo(s)** de dados brutos — cada um em "
+           "**página própria**. O .xlsx e o .csv trazem todos os equipamentos na mesma "
+           "tabela, com a coluna *Equipamento*.")
