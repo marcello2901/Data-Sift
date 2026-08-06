@@ -13,6 +13,7 @@ escapam o conteúdo.
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import streamlit as st
@@ -166,6 +167,31 @@ def render_access_denied(user: User, permission: str, page_name: Optional[str]) 
         st.switch_page("app.py")
 
 
+_ORG_CACHE_KEY = "_sec_org_cache"
+_ORG_CACHE_TTL = 300  # 5 minutos
+
+
+def _organizacao(org_id: str):
+    """
+    Laboratório do usuário, com cache curto na sessão.
+
+    A barra lateral é redesenhada a cada rerun — ou seja, a cada tecla digitada
+    numa tabela. Sem cache, cada uma dessas vezes abria uma conexão nova com o
+    banco só para reler um nome que praticamente nunca muda; em produção, com o
+    Postgres na rede, era um ida-e-volta inteiro por interação. O TTL curto
+    mantém a troca de nome do laboratório visível em poucos minutos.
+    """
+    cache = st.session_state.get(_ORG_CACHE_KEY)
+    agora = time.time()
+    if (isinstance(cache, dict) and cache.get("id") == org_id
+            and (agora - float(cache.get("t", 0))) < _ORG_CACHE_TTL):
+        return cache.get("org")
+
+    org = repository.get_organization(org_id)
+    st.session_state[_ORG_CACHE_KEY] = {"id": org_id, "org": org, "t": agora}
+    return org
+
+
 def render_account_sidebar(user: User) -> None:
     """
     Bloco de conta na barra lateral: quem sou, onde estou, e sair.
@@ -174,7 +200,7 @@ def render_account_sidebar(user: User) -> None:
     mais de uma conta precisa enxergar em qual contexto está antes de enviar
     uma planilha para o lugar errado.
     """
-    org = repository.get_organization(user.org_id)
+    org = _organizacao(user.org_id)
 
     with st.sidebar:
         st.markdown("---")

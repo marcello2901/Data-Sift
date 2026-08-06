@@ -44,10 +44,31 @@ from typing import Optional, Tuple
 
 from .config import get_config
 
-# --- Parâmetros Argon2id (OWASP: m=64 MiB, t=3, p=2 é um ponto seguro) ---
-_ARGON2_TIME_COST = 3
-_ARGON2_MEMORY_KIB = 65536  # 64 MiB
-_ARGON2_PARALLELISM = 2
+# --- Parâmetros Argon2id ---------------------------------------------------
+#
+# O padrão continua m=64 MiB, t=3, p=2. Ele é seguro, mas é caro justamente na
+# máquina em que este app roda: no Streamlit Community Cloud a CPU é
+# compartilhada e a verificação chega a passar de um segundo, além de exigir um
+# pico de 64 MiB num contêiner de 1 GB. Como o custo aceitável depende do
+# servidor, os três parâmetros são configuráveis.
+#
+# A referência atual do OWASP (2024) para Argon2id é m=19 MiB, t=2, p=1 — ou
+# seja, definir DATASIFT_ARGON2_MEMORY_KIB=19456, _TIME_COST=2 e
+# _PARALLELISM=1 deixa o login perceptivelmente mais rápido e **continua**
+# dentro da recomendação. Hashes antigos seguem válidos: o custo fica gravado
+# em cada hash, e a biblioteca usa os parâmetros do próprio hash ao verificar.
+def _param_int(nome: str, padrao: int) -> int:
+    bruto = os.environ.get(f"DATASIFT_ARGON2_{nome}")
+    try:
+        valor = int(str(bruto).strip())
+        return valor if valor > 0 else padrao
+    except (TypeError, ValueError):
+        return padrao
+
+
+_ARGON2_TIME_COST = _param_int("TIME_COST", 3)
+_ARGON2_MEMORY_KIB = _param_int("MEMORY_KIB", 65536)  # 64 MiB
+_ARGON2_PARALLELISM = _param_int("PARALLELISM", 2)
 _ARGON2_HASH_LEN = 32
 _ARGON2_SALT_LEN = 16
 
